@@ -22,7 +22,8 @@
   --paper: #f0ece4;
   --paper2: #c8c4bc;
   --accent: #e63946;
-  --accent2: #ff6b6b;
+  --accent2: #ff6b6b;[index.html](https://github.com/user-attachments/files/26040382/index.html)
+
   --gold: #ffd60a;
   --gold2: #ffed4a;
   --blue: #4895ef;
