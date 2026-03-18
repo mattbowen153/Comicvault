@@ -1,7 +1,5 @@
 <script>
-  // ────────────────────────────────────────────────
-  //  API KEYS – Prompt once and save in browser storage
-  // ────────────────────────────────────────────────
+  // Load API keys from localStorage (prompt only once)
   let ANTHROPIC_API_KEY = localStorage.getItem('claudeKey');
   if (!ANTHROPIC_API_KEY) {
     ANTHROPIC_API_KEY = prompt("Enter your Claude API key (saved in browser - only once):");
@@ -25,21 +23,25 @@
     }
   }
 
-  const COMIC_VINE_API_KEY = localStorage.getItem('comicVineKey') || '';
+  let COMIC_VINE_API_KEY = localStorage.getItem('comicVineKey');
   if (!COMIC_VINE_API_KEY) {
-    const key = prompt("Enter your Comic Vine API key (optional - for metadata):");
-    if (key && key.trim() !== "") {
-      localStorage.setItem('comicVineKey', key.trim());
+    COMIC_VINE_API_KEY = prompt("Enter your Comic Vine API key (optional - for metadata):");
+    if (COMIC_VINE_API_KEY && COMIC_VINE_API_KEY.trim() !== "") {
+      localStorage.setItem('comicVineKey', COMIC_VINE_API_KEY.trim());
       alert("Comic Vine API key saved!");
+    } else {
+      COMIC_VINE_API_KEY = null;
     }
   }
 
-  const SUPERHERO_TOKEN = localStorage.getItem('superheroToken') || '';
+  let SUPERHERO_TOKEN = localStorage.getItem('superheroToken');
   if (!SUPERHERO_TOKEN) {
-    const token = prompt("Enter your SuperHero API token (optional):");
-    if (token && token.trim() !== "") {
-      localStorage.setItem('superheroToken', token.trim());
+    SUPERHERO_TOKEN = prompt("Enter your SuperHero API token (optional):");
+    if (SUPERHERO_TOKEN && SUPERHERO_TOKEN.trim() !== "") {
+      localStorage.setItem('superheroToken', SUPERHERO_TOKEN.trim());
       alert("SuperHero API token saved!");
+    } else {
+      SUPERHERO_TOKEN = null;
     }
   }
 
@@ -130,8 +132,129 @@
     return "SELL INDIVIDUALLY";
   }
 
-  // Claude, Gemini, SuperHero, Comic Vine, renderCollection, updateStatus functions go here
-  // (copy them from your previous working version or let me know if you need the full script again)
+  // Claude primary
+  async function getClaudeValue(title, issue, grade, photoDataUrl) {
+    if (!photoDataUrl || !ANTHROPIC_API_KEY) return null;
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: "claude-3-5-sonnet-20241022",
+          max_tokens: 300,
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type: "image/jpeg", data: photoDataUrl.split(',')[1] } },
+              { type: "text", text: `Comic cover photo. Title: ${title} #${issue}, grade: ${grade}. Analyze condition. Suggest raw grade + reasoning. Estimate 2026 raw market value USD (low/mid/high) – be fair, no lowballing. Return ONLY JSON: {"suggested_grade":"VF","reason":"text","low":0,"mid":0,"high":0}` }
+            ]
+          }]
+        })
+      });
+      if (!res.ok) throw new Error(res.status);
+      const d = await res.json();
+      const txt = d.content?.[0]?.text || '{}';
+      const parsed = JSON.parse(txt);
+      return parsed.mid ? { ...parsed, mid_value: parsed.mid } : null;
+    } catch (e) {
+      console.log("Claude failed:", e);
+      return null;
+    }
+  }
 
+  // Gemini fallback
+  async function getGeminiValue(title, issue, grade, photoDataUrl) {
+    if (!photoDataUrl || !GEMINI_API_KEY) return null;
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inline_data: { mime_type: "image/jpeg", data: photoDataUrl.split(',')[1] } },
+              { text: `Comic cover. Title: ${title} #${issue}, grade: ${grade}. Analyze condition. Suggest raw grade + reasoning. Estimate 2026 raw mid value USD – be fair. JSON only: {"suggested_grade":"VF","reason":"text","low":0,"mid":0,"high":0}` }
+            ]
+          }]
+        })
+      });
+      const d = await res.json();
+      const txt = d.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+      const parsed = JSON.parse(txt);
+      return parsed.mid ? { ...parsed, mid_value: parsed.mid } : null;
+    } catch (e) {
+      console.log("Gemini failed:", e);
+      return null;
+    }
+  }
+
+  // SuperHero lookup
+  async function getSuperheroInfo(name) {
+    if (!name || !SUPERHERO_TOKEN) return null;
+    try {
+      const res = await fetch(`https://superheroapi.com/api/${SUPERHERO_TOKEN}/search/${encodeURIComponent(name)}`);
+      const data = await res.json();
+      return data.results?.[0] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Comic Vine lookup
+  async function comicVineLookup(title, issue) {
+    if (!COMIC_VINE_API_KEY) return null;
+    try {
+      const res = await fetch(`https://comicvine.gamespot.com/api/search/?api_key=${COMIC_VINE_API_KEY}&format=json&query=${encodeURIComponent(`${title} ${issue}`)}&resources=issue&limit=1`);
+      const data = await res.json();
+      return data.results?.[0] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // Render collection
+  function renderCollection() {
+    const list = document.getElementById('comic-list');
+    list.innerHTML = '';
+    comics.forEach(c => {
+      const div = document.createElement('div');
+      div.className = 'comic-card';
+      div.innerHTML = `
+        ${c.photo ? `<img src="${c.photo}" style="max-width:120px;border-radius:8px;float:left;margin-right:1rem;" />` : ''}
+        <h3>${c.title} #${c.issue} (${c.year || '?'})</h3>
+        <p>Grade: ${c.grade}</p>
+        <p>Value: $${c.value.toFixed(0)}</p>
+        <p>Status: <span class="status-${c.status.toLowerCase().replace(/ /g,'-')}">${c.status}</span></p>
+        ${c.ai_reason ? `<p style="font-size:0.85rem;color:#aaa;">AI: ${c.ai_reason}</p>` : ''}
+        ${c.character ? `<p>Character: ${c.character}</p>` : ''}
+        <div style="margin-top:1rem;display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button onclick="window.open('https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(c.title + ' ' + c.issue + ' comic')}&_sacat=259104', '_blank')">eBay Search</button>
+          <button onclick="window.open('https://comicvine.gamespot.com/search/?q=${encodeURIComponent(c.title + ' ' + c.issue)}', '_blank')">Comic Vine</button>
+          <select onchange="updateStatus(${c.id}, this.value)" style="padding:0.5rem;">
+            <option ${c.status === 'KEEP (High Value Key)' ? 'selected' : ''}>KEEP (High Value Key)</option>
+            <option ${c.status === 'MONITOR / SELL INDIVIDUALLY' ? 'selected' : ''}>MONITOR / SELL INDIVIDUALLY</option>
+            <option ${c.status === 'SELL INDIVIDUALLY' ? 'selected' : ''}>SELL INDIVIDUALLY</option>
+            <option ${c.status === 'BUNDLE / SELL CHEAP' ? 'selected' : ''}>BUNDLE / SELL CHEAP</option>
+          </select>
+        </div>
+        <div style="clear:both;"></div>
+      `;
+      list.appendChild(div);
+    });
+  }
+
+  function updateStatus(id, newStatus) {
+    const comic = comics.find(c => c.id === id);
+    if (comic) {
+      comic.status = newStatus;
+      localStorage.setItem('comics', JSON.stringify(comics));
+      renderCollection();
+    }
+  }
+
+  // Load collection on page load
   renderCollection();
 </script>
