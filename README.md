@@ -22,7 +22,8 @@ if (!GEMINI_API_KEY) {
     localStorage.setItem('geminiKey', GEMINI_API_KEY.trim());
     alert("Gemini API key saved.");
   } else {
-    GEMINI_API_KEY = null;
+    GEMINI_API_[index.html](https://github.com/user-attachments/files/26071826/index.html)
+KEY = null;
   }
 }
 
