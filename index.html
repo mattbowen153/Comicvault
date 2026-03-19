@@ -2393,9 +2393,12 @@ async function runGrade(){
   btn.textContent='⏳ Analyzing…'; btn.disabled=true; out.style.display='none';
   try{
     const msgs=[];
+    // Include collection context so AI can advise bulk vs individual
+    const collectionContext = DB.comics.filter(c=>c.publisher===publisher||c.title===title).length;
     const prompt=`You are a senior CGC-certified comic book grader and market analyst with 20 years experience. You have deep knowledge of current eBay sold listings, GoCollect data, and Heritage Auctions results.
 
 Analyze this comic: "${title}" #${cleanIssue(issue)}${year?' ('+year+')':''}${publisher?' by '+publisher:''}${variant?' ['+variant+']':''}.
+Collector context: They own ${collectionContext} comic(s) from this publisher/series.
 
 CRITICAL PRICING RULES — do NOT use generic placeholder prices:
 - Base ALL prices on realistic recent sold listings (last 90 days)
@@ -2408,6 +2411,12 @@ CRITICAL PRICING RULES — do NOT use generic placeholder prices:
 - If this is NOT a key issue, prices should reflect that honestly (often $3-12)
 - If this IS a key issue, explain exactly why and price accordingly
 - Never default to $8/$15/$25 — give real market-based numbers
+
+SELL STRATEGY RULES:
+- Individual sale: best when price_mid is $15+ and it's a recognizable title/issue
+- Bulk/lot sale: best when price_mid is under $10, common issue, or hard to move alone
+- Mixed: some issues sell better bundled with related issues (same run, same arc)
+- Consider eBay fees (~13%), shipping (~$5-6), and time cost when advising
 
 Respond ONLY with valid JSON (no markdown, no backticks):
 {
@@ -2423,13 +2432,19 @@ Respond ONLY with valid JSON (no markdown, no backticks):
 "price_confidence":"medium",
 "price_basis":"Recent eBay sold listings for VF copies, 12 sales in last 90 days",
 "cgc_98_estimate":250,
-"recommendation":"hold",
-"rec_label":"Hold — Key Issue",
-"rec_reason":"2-3 sentences with specific market reasoning — mention trends, demand, and what would change the recommendation",
+"recommendation":"sell",
+"rec_label":"Sell — Good Market Now",
+"rec_reason":"2-3 sentences with specific market reasoning",
 "is_key_issue":true,
-"key_notes":"First appearance of Venom (Eddie Brock) — one of most sought-after modern keys",
+"key_notes":"First appearance of Venom",
 "market_trend":"rising",
-"best_platform":"eBay auction"
+"sell_strategy":"individual",
+"sell_strategy_reason":"This issue has enough name recognition to sell on its own for $65 — bundling would actually lower your per-comic return",
+"best_platform":"eBay BIN",
+"best_platform_reason":"BIN with best offer works well for this price range — auction only makes sense for keys over $100",
+"bundle_with":"If you want to bundle, pair with other Copper Age DC keys to attract run collectors",
+"time_to_sell":"1-3 weeks at the right price",
+"avoid":"Avoid Facebook Marketplace for this one — comic buyers there typically lowball Silver/Bronze Age books"
 }`;
     if(imgSrc&&imgSrc.startsWith('data:')){
       msgs.push({role:'user',content:[{type:'image',source:{type:'base64',media_type:imgSrc.split(';')[0].split(':')[1],data:imgSrc.split(',')[1]}},{type:'text',text:prompt}]});
@@ -2471,6 +2486,18 @@ Respond ONLY with valid JSON (no markdown, no backticks):
         <div class="rec-header"><div class="rec-verdict" style="color:${recColor}">${d.rec_label}</div></div>
         <div class="rec-body">${d.rec_reason}</div>
       </div>
+
+      ${d.sell_strategy?`
+      <div style="margin-top:.8rem;padding:.8rem 1rem;background:rgba(72,149,239,.06);border:1px solid rgba(72,149,239,.25);border-radius:4px">
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--blue);letter-spacing:.5px;margin-bottom:.4rem">
+          ${d.sell_strategy==='individual'?'🏷️ SELL INDIVIDUALLY':d.sell_strategy==='bulk'?'📦 SELL IN A LOT/BUNDLE':'📦 BUNDLE OPPORTUNITY'}
+        </div>
+        <div style="font-size:.8rem;color:var(--paper2);line-height:1.6;margin-bottom:.4rem">${d.sell_strategy_reason||''}</div>
+        ${d.best_platform?`<div style="font-size:.76rem;color:var(--paper2);margin-bottom:.2rem">✅ <strong>Best platform:</strong> ${d.best_platform}${d.best_platform_reason?' — '+d.best_platform_reason:''}</div>`:''}
+        ${d.time_to_sell?`<div style="font-size:.76rem;color:var(--dim);margin-bottom:.2rem">⏱ <strong>Expected time to sell:</strong> ${d.time_to_sell}</div>`:''}
+        ${d.bundle_with?`<div style="font-size:.76rem;color:var(--gold);margin-bottom:.2rem">💡 <strong>Bundle tip:</strong> ${d.bundle_with}</div>`:''}
+        ${d.avoid?`<div style="font-size:.76rem;color:var(--orange)">⚠ ${d.avoid}</div>`:''}
+      </div>`:''}
     </div>`;
   } catch(e){
     out.style.display='block';
