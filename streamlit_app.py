@@ -7,7 +7,7 @@ from google.api_core import exceptions
 # --- 1. CONFIG & API SETUP ---
 st.set_page_config(page_title="ComicVault Pro", layout="wide")
 
-# Get keys from Streamlit Secrets
+# Standardized keys from Secrets
 gemini_key = st.secrets.get("GEMINI_API_KEY")
 cv_key = st.secrets.get("COMICVINE_API_KEY")
 
@@ -23,7 +23,6 @@ def search_comic_vine(title, issue):
         return "Comic Vine Key missing in Secrets."
     
     clean_title = title.replace(" ", "%20")
-    # Using the standard Comic Vine issues filter
     url = f"https://comicvine.gamespot.com{cv_key}&format=json&filter=name:{clean_title},issue_number:{issue}"
     headers = {'User-Agent': 'ComicVaultPro/1.0'}
     
@@ -31,8 +30,9 @@ def search_comic_vine(title, issue):
         response = requests.get(url, headers=headers)
         data = response.json()
         if data.get('results'):
-            # Grabbing the first match from the list
-            res = data['results'][0] if isinstance(data['results'], list) else data['results']
+            # Handles results whether they come back as a list or a single object
+            results = data['results']
+            res = results[0] if isinstance(results, list) else results
             vol_name = res.get('volume', {}).get('name', 'Unknown Series')
             iss_num = res.get('issue_number', '??')
             return f"✅ Database Match: {vol_name} #{iss_num}"
@@ -61,19 +61,17 @@ if page == "Scan & Add":
             else:
                 with st.spinner("Analyzing with AI..."):
                     try:
-                        # Improved prompt for DC, Image, Dark Horse, etc.
+                        # High-accuracy prompt for any publisher
                         prompt = "Identify this comic book. Return ONLY: Publisher, Series, Issue Number."
                         response = model.generate_content([prompt, img])
                         st.success(f"AI Result: {response.text}")
                     except exceptions.ResourceExhausted:
-                        st.error("⚠️ AI Limit reached (429). Please wait 60s or use the Database Search below.")
+                        st.error("⚠️ AI limit reached (429). Please wait 60s.")
                     except Exception as e:
                         st.error(f"AI Error: {e}")
 
     st.divider()
     st.subheader("Manual / Database Search")
-    st.write("Use this if the AI is busy or identifies the wrong book.")
-    
     col1, col2 = st.columns(2)
     with col1:
         search_t = st.text_input("Series Title", "Green Lantern")
@@ -88,7 +86,7 @@ if page == "Scan & Add":
 # --- 5. MY COLLECTION PAGE ---
 elif page == "My Collection":
     st.header("Your Vault")
-    st.info("Your saved comics will appear here in the next update!")
+    st.info("Storage features coming soon! Your collection will be saved here.")
 
 st.markdown("---")
 st.write("Deployed on Streamlit Cloud")
