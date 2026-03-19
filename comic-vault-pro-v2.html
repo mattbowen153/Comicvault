@@ -1,26 +1,322 @@
-<script>
-  let comics = JSON.parse(localStorage.getItem('comics')) || [];
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="description" content="ComicVault Pro — Comic book collection manager with AI scanning, grading, and deal analysis">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ComicVault">
+<meta name="theme-color" content="#0a0a0f">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230a0a0f'/><text y='.9em' font-size='80' x='10'>📚</text></svg>">
+<title>ComicVault Pro</title>
+<link rel="manifest" href="#" id="manifestLink">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap');
 
-  function startScanner() {
-    alert("Scanner starting (camera permission will be requested)");
-    // Your original scanner code here if you have it
-  }
+:root {
+  --ink: #0a0a0f;
+  --ink2: #111118;
+  --panel: #16161f;
+  --panel2: #1e1e2a;
+  --border: #2a2a3e;
+  --border2: #3a3a50;
+  --paper: #f0ece4;
+  --paper2: #c8c4bc;
+  --accent: #e63946;
+  --accent2: #ff6b6b;
+  --gold: #ffd60a;
+  --gold2: #ffed4a;
+  --blue: #4895ef;
+  --green: #4ade80;
+  --orange: #fb923c;
+  --purple: #a78bfa;
+  --dim: #666680;
+  --sidebar-w: 240px;
+  --header-h: 56px;
+  --bottom-nav-h: 64px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
 
-  function renderCollection() {
-    const list = document.getElementById('comic-list');
-    list.innerHTML = '';
-    comics.forEach(c => {
-      const div = document.createElement('div');
-      div.innerHTML = `
-        <div style="background:#16161f; padding:1rem; margin:1rem; border-radius:12px;">
-          <h3>${c.title || 'Unknown'} #${c.issue || '?'}</h3>
-          <p>Grade: ${c.grade || '?'}</p>
-          <p>Value: $${c.value || 0}</p>
-          <p>Status: ${c.status || 'Unknown'}</p>
-        </div>`;
-      list.appendChild(div);
-    });
-  }
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;overflow:hidden;}
 
-  renderCollection();
-</script>
+body {
+  background:var(--ink);
+  color:var(--paper);
+  font-family:'Barlow',sans-serif;
+  font-size:15px;
+}
+
+/* ───── LAYOUT SHELL ───── */
+.app-shell {
+  display:flex;
+  height:100vh;
+  overflow:hidden;
+  position:relative;
+}
+
+/* ───── SIDEBAR (desktop) ───── */
+.sidebar {
+  width:var(--sidebar-w);
+  min-width:var(--sidebar-w);
+  background:var(--ink2);
+  border-right:1px solid var(--border);
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  z-index:50;
+  transition:transform .3s cubic-bezier(.4,0,.2,1);
+}
+.sidebar-logo {
+  padding:1.2rem 1.4rem;
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;
+}
+.sidebar-logo-text {
+  font-family:'Bebas Neue',cursive;
+  font-size:1.5rem;letter-spacing:4px;
+  line-height:1;
+}
+.sidebar-logo-text span{color:var(--accent);}
+.sidebar-logo small{
+  display:block;font-size:.55rem;letter-spacing:3px;
+  text-transform:uppercase;color:var(--dim);margin-top:2px;
+}
+.sidebar-nav{flex:1;overflow-y:auto;padding:.5rem 0;}
+.nav-section-label {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:.6rem;letter-spacing:3px;text-transform:uppercase;
+  color:var(--dim);padding:.7rem 1.4rem .3rem;
+}
+.nav-item {
+  display:flex;align-items:center;gap:10px;
+  padding:.65rem 1.4rem;
+  cursor:pointer;
+  color:var(--paper2);
+  font-family:'Barlow Condensed',sans-serif;
+  font-weight:600;font-size:.85rem;letter-spacing:1px;
+  text-transform:uppercase;
+  transition:all .15s;
+  position:relative;
+  border-left:3px solid transparent;
+}
+.nav-item:hover{color:var(--paper);background:rgba(255,255,255,.04);}
+.nav-item.active{
+  color:var(--gold);background:rgba(255,214,10,.07);
+  border-left-color:var(--gold);
+}
+.nav-item .nav-icon{font-size:1.1rem;width:22px;text-align:center;}
+.nav-badge {
+  margin-left:auto;background:var(--accent);color:#fff;
+  font-size:.6rem;padding:2px 6px;border-radius:2px;font-weight:700;
+}
+.sidebar-footer{
+  padding:1rem 1.4rem;border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:10px;
+  color:var(--dim);font-size:.85rem;
+}
+.sidebar-footer a{color:var(--dim);text-decoration:none;}
+.sidebar-footer a:hover{color:var(--paper);}
+
+/* ───── MAIN CONTENT ───── */
+.main-content {
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.header {
+  height:var(--header-h);
+  background:var(--panel);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 1.5rem;
+  flex-shrink:0;
+}
+.header-title {
+  font-family:'Bebas Neue',cursive;
+  font-size:1.8rem;letter-spacing:2px;
+}
+.header-actions {
+  display:flex;gap:1rem;
+}
+.header-btn {
+  background:var(--panel2);
+  border:1px solid var(--border);
+  color:var(--paper);
+  padding:0.5rem 1rem;
+  border-radius:8px;
+  cursor:pointer;
+  font-size:0.9rem;
+}
+
+/* ───── COLLECTION ───── */
+.collection-grid {
+  flex:1;
+  overflow-y:auto;
+  padding:1.5rem;
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:1.5rem;
+}
+.comic-card {
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:12px;
+  overflow:hidden;
+  position:relative;
+  transition:transform .2s,box-shadow .2s;
+}
+.comic-card:hover {
+  transform:translateY(-8px);
+  box-shadow:0 12px 24px rgba(0,0,0,0.4);
+}
+.comic-cover {
+  height:240px;
+  background:#0a0a0f;
+  display:flex;align-items:center;justify-content:center;
+  font-size:3rem;
+}
+.comic-info {
+  padding:1rem;
+}
+.comic-title {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:1.1rem;font-weight:700;
+  margin-bottom:0.3rem;
+}
+.comic-grade {
+  font-size:0.9rem;color:var(--dim);
+}
+
+/* ───── BOTTOM NAV (mobile) ───── */
+.bottom-nav {
+  height:var(--bottom-nav-h);
+  background:var(--panel);
+  border-top:1px solid var(--border);
+  display:flex;
+  justify-content:space-around;
+  align-items:center;
+  flex-shrink:0;
+}
+.nav-icon {
+  font-size:1.8rem;
+  color:var(--dim);
+}
+.nav-icon.active {color:var(--gold);}
+
+/* ───── RESPONSIVE ───── */
+@media (max-width: 768px) {
+  .sidebar {display:none;}
+  .main-content {margin-left:0;}
+  .bottom-nav {display:flex;}
+}
+@media (min-width: 769px) {
+  .bottom-nav {display:none;}
+}
+</style>
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-logo">
+        <span class="sidebar-logo-text">COMICVAULT <span>PRO</span></span>
+      </div>
+      <div class="sidebar-nav">
+        <div class="nav-section-label">COLLECTION</div>
+        <div class="nav-item active"><span class="nav-icon">📚</span> COLLECTION</div>
+        <div class="nav-item"><span class="nav-icon">❓</span> MISSING ISSUES</div>
+        <div class="nav-item"><span class="nav-icon">🔍</span> COMIC FINDER</div>
+        <div class="nav-item"><span class="nav-icon">🛠️</span> INVENTORY BUILDER</div>
+        <div class="nav-item"><span class="nav-icon">🔗</span> CROSSOVERS & KEYS</div>
+        <div class="nav-section-label">SELLING</div>
+        <div class="nav-item"><span class="nav-icon">💰</span> SELLING VS GRADED</div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <div class="header">
+        <div class="header-title">ComicVault</div>
+        <div class="header-actions">
+          <button class="header-btn">+ ADD</button>
+          <button class="header-btn">SCAN</button>
+          <button class="header-btn">BULK</button>
+        </div>
+      </div>
+
+      <div style="padding:1.5rem;">
+        <div style="display:flex;gap:1rem;margin-bottom:1.5rem;">
+          <div style="background:var(--panel);padding:1rem;border-radius:12px;flex:1;text-align:center;">
+            <div style="font-size:2rem;font-weight:bold;color:#4ade80;">5</div>
+            <div style="color:var(--dim);">COMICS</div>
+          </div>
+          <div style="background:var(--panel);padding:1rem;border-radius:12px;flex:1;text-align:center;">
+            <div style="font-size:2rem;font-weight:bold;color:#ffd60a;">$4,380</div>
+            <div style="color:var(--dim);">EST. VALUE</div>
+          </div>
+          <div style="background:var(--panel);padding:1rem;border-radius:12px;flex:1;text-align:center;">
+            <div style="font-size:2rem;font-weight:bold;color:#e63946;">0</div>
+            <div style="color:var(--dim);">LISTED</div>
+          </div>
+        </div>
+
+        <div style="margin-bottom:1rem;">
+          <input type="text" placeholder="Search title, issue, publisher..." style="width:100%;padding:0.8rem;border-radius:8px;border:1px solid var(--border);background:var(--panel2);color:white;">
+        </div>
+
+        <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;">
+          <button style="background:var(--accent);color:white;border:none;padding:0.5rem 1rem;border-radius:6px;">ALL</button>
+          <button style="background:var(--panel2);color:white;border:none;padding:0.5rem 1rem;border-radius:6px;">NM</button>
+          <button style="background:var(--panel2);color:white;border:none;padding:0.5rem 1rem;border-radius:6px;">VF</button>
+          <button style="background:var(--panel2);color:white;border:none;padding:0.5rem 1rem;border-radius:6px;">FN</button>
+        </div>
+
+        <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+          <button style="background:var(--panel2);color:white;border:none;padding:0.5rem 1rem;border-radius:6px;">DARK HORSE</button>
+          <button style="background:var(--panel2);color:white;border:none;padding:0.5rem 1rem;border-radius:6px;">IDW</button>
+          <button style="background:var(--panel2);color:white;border:none;padding:0.5rem 1rem;border-radius:6px;">MARVEL</button>
+          <button style="background:var(--panel2);color:white;border:none;padding:0.5rem 1rem;border-radius:6px;">DC</button>
+        </div>
+
+        <div id="comic-list" class="collection-grid">
+          <!-- Comics will be rendered here by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Your original working JavaScript goes here
+    // Paste your known-good script from before the additions
+
+    // Example minimal starter to confirm rendering
+    let comics = [
+      { title: "Batman", issue: "1", grade: "VF", value: 150, status: "HOLD" },
+      { title: "Spider-Man", issue: "300", grade: "NM", value: 800, status: "HOLD" },
+    ];
+
+    function renderCollection() {
+      const list = document.getElementById('comic-list');
+      list.innerHTML = '';
+      comics.forEach(c => {
+        const card = document.createElement('div');
+        card.className = 'comic-card';
+        card.innerHTML = `
+          <div class="comic-cover">📖</div>
+          <div class="comic-info">
+            <div class="comic-title">${c.title} #${c.issue}</div>
+            <div class="comic-grade">${c.grade} - $${c.value}</div>
+          </div>
+        `;
+        list.appendChild(card);
+      });
+    }
+
+    renderCollection();
+  </script>
+</body>
+</html>
