@@ -1,74 +1,75 @@
 import streamlit as st
 import google.generativeai as genai
 from PIL import Image
-import os
+import requests
+from google.api_core import exceptions
 
-# --- 1. APP CONFIGURATION ---
+# --- 1. CONFIG & API SETUP ---
 st.set_page_config(page_title="ComicVault Pro", layout="wide")
 
-# --- 2. AI SETUP (Gemini) ---
-# This looks for the GEMINI_API_KEY in your Streamlit Cloud "Secrets"
-api_key = st.secrets.get("GEMINI_API_KEY")
+gemini_key = st.secrets.get("GEMINI_API_KEY")
+cv_key = st.secrets.get("COMICVINE_API_KEY")
 
-if api_key:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.0-flash')
-else:
-    st.warning("⚠️ API Key not found. Please add GEMINI_API_KEY to your Streamlit Secrets.")
+if gemini_key:
+    genai.configure(api_key=gemini_key)
+    # Using 1.5-flash as it is often more stable for free-tier quotas
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
-# --- 3. SIDEBAR NAVIGATION ---
+# --- 2. COMIC VINE FALLBACK FUNCTION ---
+def search_comic_vine(title, issue):
+    if not cv_key:
+        return "Comic Vine Key missing in Secrets."
+    
+    # Comic Vine API Search URL
+    url = f"https://comicvine.gamespot.com{cv_key}&format=json&filter=name:{title},issue_number:{issue}"
+    headers = {'User-Agent': 'ComicVaultPro/1.0'}
+    
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        if data['results']:
+            first_match = data['results'][0]
+            return f"Found: {first_match['volume']['name']} #{first_match['issue_number']} - {first_match.get('name', 'No Title')}"
+        return "No exact match found on Comic Vine."
+    except Exception as e:
+        return f"Database error: {e}"
+
+# --- 3. THE INTERFACE ---
+st.title("📚 ComicVault Pro")
 st.sidebar.title("Menu")
 page = st.sidebar.radio("Go to", ["Scan & Add", "My Collection"])
 
-# --- 4. PAGE: SCAN & ADD ---
 if page == "Scan & Add":
-    st.title("ComicVault Pro")
-    st.header("Scan or Add Comic")
-    st.markdown("Works for DC, Marvel, Image, Dark Horse, and more.")
-    
-    picture = st.camera_input("Take photo of comic cover")
-    
+    st.header("Scan a Comic")
+    picture = st.camera_input("Take a photo of the cover")
+
     if picture:
-        # Display the captured image immediately
         img = Image.open(picture)
-        st.image(img, caption="Captured photo", width=400)
-        
-        # Identification Logic
-        if st.button("Analyze Comic"):
-            if not api_key:
-                st.error("Cannot analyze without an API Key in Secrets.")
-            else:
-                with st.spinner("Searching the Multiverse for this issue..."):
-                    try:
-                        # This prompt works for DC (Green Lantern), Image, Dark Horse, etc.
-                        prompt = """
-                        Identify this comic book cover. 
-                        Be specific. Find the:
-                        1. Publisher (DC, Marvel, Image, Dark Horse, etc.)
-                        2. Series Title
-                        3. Issue Number
-                        4. Notable Story Arc or Characters
-                        Return the results clearly.
-                        """
-                        response = model.generate_content([prompt, img])
-                        
-                        st.success("Target Identified!")
-                        st.markdown(f"### Results:\n{response.text}")
-                    except Exception as e:
-                        st.error(f"Scanner error: {e}")
+        st.image(img, width=300)
 
-        # Manual entry if the AI needs correction
-        with st.expander("Edit Details Manually"):
-            title = st.text_input("Title", "Green Lantern")
-            issue = st.text_input("Issue #", "101")
-            grade = st.selectbox("Grade", ["NM", "VF", "FN", "VG", "Good", "Fair", "Poor"])
-            if st.button("Save to Vault"):
-                st.success(f"Added {title} #{issue} to your collection!")
+        if st.button("Identify with AI"):
+            with st.spinner("Analyzing..."):
+                try:
+                    prompt = "Identify this comic book. Return ONLY: Publisher, Series, Issue Number."
+                    response = model.generate_content([prompt, img])
+                    st.success(response.text)
+                except exceptions.ResourceExhausted:
+                    st.error("⚠️ Gemini is at its limit (429 Error). Please wait 60 seconds or use the Database Search below.")
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
-# --- 5. PAGE: MY COLLECTION ---
+    st.divider()
+    st.subheader("Database Search (Backup)")
+    col1, col2 = st.columns(2)
+    with col1:
+        search_t = st.text_input("Title", "Green Lantern")
+    with col2:
+        search_i = st.text_input("Issue #", "101")
+    
+    if st.button("Search Database"):
+        with st.spinner("Checking Comic Vine..."):
+            result = search_comic_vine(search_t, search_i)
+            st.info(result)
+
 elif page == "My Collection":
-    st.header("My Collection")
-    st.info("Collection database coming soon...")
-
-st.markdown("---")
-st.write("Deployed on Streamlit Cloud — Powered by Google Gemini AI")
+    st.info("Your vault is currently empty.")
