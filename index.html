@@ -2495,8 +2495,13 @@ Respond ONLY with valid JSON (no markdown, no backticks):
         <div style="font-size:.8rem;color:var(--paper2);line-height:1.6;margin-bottom:.4rem">${d.sell_strategy_reason||''}</div>
         ${d.best_platform?`<div style="font-size:.76rem;color:var(--paper2);margin-bottom:.2rem">✅ <strong>Best platform:</strong> ${d.best_platform}${d.best_platform_reason?' — '+d.best_platform_reason:''}</div>`:''}
         ${d.time_to_sell?`<div style="font-size:.76rem;color:var(--dim);margin-bottom:.2rem">⏱ <strong>Expected time to sell:</strong> ${d.time_to_sell}</div>`:''}
-        ${d.bundle_with?`<div style="font-size:.76rem;color:var(--gold);margin-bottom:.2rem">💡 <strong>Bundle tip:</strong> ${d.bundle_with}</div>`:''}
-        ${d.avoid?`<div style="font-size:.76rem;color:var(--orange)">⚠ ${d.avoid}</div>`:''}
+        ${d.bundle_with?`<div style="font-size:.76rem;color:var(--gold);margin-bottom:.4rem">💡 <strong>Bundle tip:</strong> ${d.bundle_with}</div>`:''}
+        ${d.avoid?`<div style="font-size:.76rem;color:var(--orange);margin-bottom:.6rem">⚠ ${d.avoid}</div>`:''}
+        ${d.sell_strategy!=='individual'?`
+        <button class="btn btn-gold btn-sm" style="width:100%;margin-top:.2rem" onclick="findBundlePartners('${title.replace(/'/g,"\\'")}','${cleanIssue(issue)}','${publisher.replace(/'/g,"\\'")}','${(d.bundle_with||'').replace(/'/g,"\\'")}')">
+          🔍 Find Specific Issues to Bundle With
+        </button>
+        <div id="bundlePartnersResult" style="margin-top:.6rem"></div>`:''}
       </div>`:''}
     </div>`;
   } catch(e){
@@ -2512,8 +2517,93 @@ Respond ONLY with valid JSON (no markdown, no backticks):
 }
 
 // ══════════════════════════════════
-//  SELL / LISTINGS
+//  BUNDLE PARTNER FINDER
 // ══════════════════════════════════
+async function findBundlePartners(title, issue, publisher, bundleHint){
+  const resultDiv = document.getElementById('bundlePartnersResult');
+  if(!resultDiv) return;
+  if(!apiKeys.anthropic){ resultDiv.innerHTML=`<div style="color:var(--accent2);font-size:.78rem">⚠ Anthropic API key needed for this feature.</div>`; return; }
+
+  resultDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Finding best issues to bundle with…</div></div>`;
+
+  // Check what the collector already owns from this series
+  const owned = DB.comics.filter(c=>c.title.toLowerCase()===title.toLowerCase()).map(c=>'#'+cleanIssue(c.issue));
+  const ownedStr = owned.length ? 'Collector already owns: '+owned.join(', ') : 'No other issues from this series in collection';
+
+  try{
+    const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:anthropicHeaders(),
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:700,
+        messages:[{role:'user',content:`A collector wants to bundle "${title}" #${issue} (${publisher}) for sale.
+${ownedStr}
+Bundle hint from grading: ${bundleHint||'bundle with related issues'}
+
+Suggest the 4-6 BEST specific issues to bundle with this comic to maximize sale value and attract the right buyers. Think about:
+- Story arcs that connect (same storyline, crossovers)
+- Key issues in the same run that buyers often want together
+- Issues that complete a popular arc
+- Price balance (mix of values for a compelling lot)
+- What type of collector buys this title and what else they want
+
+Respond ONLY with JSON:
+{
+  "bundle_title": "A catchy lot title e.g. 'Fantastic Four Cosmic Era Lot #48-53'",
+  "target_buyer": "Who buys this — e.g. 'Copper Age Marvel collectors, FF completionists'",
+  "suggested_issues": [
+    {
+      "issue": "48",
+      "reason": "First appearance of Silver Surfer and Galactus — dramatically increases lot value",
+      "estimated_value": "$150-300 VF",
+      "priority": "high"
+    }
+  ],
+  "estimated_lot_value": "$45-80 as a lot",
+  "vs_individual": "Selling individually might get $35 total, lot gets $55-70 and sells faster",
+  "listing_tip": "How to write the eBay title for maximum visibility"
+}`}]})});
+    const data = await res.json();
+    const txt = data.content?.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+    const d = JSON.parse(txt);
+
+    resultDiv.innerHTML=`
+      <div style="padding:.8rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px;margin-top:.4rem">
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;color:var(--gold);margin-bottom:.3rem">📦 ${d.bundle_title||'Suggested Bundle'}</div>
+        <div style="font-size:.73rem;color:var(--dim);margin-bottom:.6rem">Target buyer: ${d.target_buyer||''}</div>
+
+        ${(d.suggested_issues||[]).map(s=>`
+        <div style="display:flex;align-items:flex-start;gap:.6rem;padding:.5rem 0;border-bottom:1px solid rgba(255,255,255,.05)">
+          <div style="background:${s.priority==='high'?'rgba(255,214,10,.15)':'rgba(255,255,255,.06)'};border:1px solid ${s.priority==='high'?'rgba(255,214,10,.3)':'var(--border)'};padding:.2rem .5rem;border-radius:3px;font-family:'Bebas Neue';font-size:1rem;flex-shrink:0;min-width:40px;text-align:center">#${s.issue}</div>
+          <div style="flex:1">
+            <div style="font-size:.78rem;color:var(--paper2)">${s.reason}</div>
+            <div style="font-size:.7rem;color:var(--gold);margin-top:.2rem">${s.estimated_value||''}</div>
+          </div>
+          ${s.priority==='high'?'<div style="font-size:.65rem;color:var(--gold);font-family:\'Barlow Condensed\';font-weight:700">KEY</div>':''}
+        </div>`).join('')}
+
+        <div style="margin-top:.6rem;padding:.5rem .7rem;background:rgba(74,222,128,.06);border-radius:3px;font-size:.75rem;color:var(--green)">
+          💰 <strong>Lot value estimate:</strong> ${d.estimated_lot_value||''}
+        </div>
+        ${d.vs_individual?`<div style="font-size:.73rem;color:var(--dim);margin-top:.3rem">${d.vs_individual}</div>`:''}
+        ${d.listing_tip?`<div style="margin-top:.5rem;font-size:.73rem;color:var(--blue)">📝 Listing tip: ${d.listing_tip}</div>`:''}
+
+        <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:.6rem;font-size:.72rem" onclick="addBundleToWantList(${JSON.stringify((d.suggested_issues||[]).map(s=>s.issue))}, '${title.replace(/'/g,"\\'")}', '${publisher.replace(/'/g,"\\'")}')">
+          ⭐ Add Missing Bundle Issues to Want List
+        </button>
+      </div>`;
+  }catch(e){
+    resultDiv.innerHTML=`<div style="color:var(--accent2);font-size:.78rem">⚠ Could not load bundle suggestions.</div>`;
+  }
+}
+
+function addBundleToWantList(issues, title, publisher){
+  let added=0;
+  const owned = DB.comics.filter(c=>c.title.toLowerCase()===title.toLowerCase()).map(c=>cleanIssue(c.issue));
+  issues.forEach(iss=>{
+    if(!owned.includes(String(iss)) && addToWantSilent(title, String(iss), publisher)) added++;
+  });
+  saveDB();
+  document.getElementById('wantCount').textContent=DB.wantList.length;
+  toast(`⭐ Added ${added} bundle issues to Want List`);
+}
 function openSell(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   sellId=id;
