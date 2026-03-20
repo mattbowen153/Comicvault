@@ -5565,11 +5565,55 @@ async function runSellStrategy(){
 // ══════════════════════════════════
 function exportData(){
   const payload={comics:DB.comics,listings:DB.listings,sold:DB.sold,receipts:DB.receipts,wantList:DB.wantList,exportedAt:new Date().toISOString(),version:'2.0'};
-  const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url; a.download=`comicvault-backup-${new Date().toISOString().slice(0,10)}.json`;
-  a.click(); URL.revokeObjectURL(url);
+  const json=JSON.stringify(payload,null,2);
+  try{
+    // Method 1: Standard blob download (works on desktop)
+    const blob=new Blob([json],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`comicvault-backup-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('✅ Backup downloaded!');
+  }catch(e){
+    // Method 2: data URI fallback (works on Android Chrome)
+    try{
+      const dataUri='data:application/json;charset=utf-8,'+encodeURIComponent(json);
+      const a=document.createElement('a');
+      a.href=dataUri;
+      a.download=`comicvault-backup-${new Date().toISOString().slice(0,10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast('✅ Backup downloaded!');
+    }catch(e2){
+      // Method 3: Show the JSON in a copyable text box as last resort
+      showExportFallback(json);
+    }
+  }
+}
+
+function showExportFallback(json){
+  // Show modal with copyable text if file download fails
+  const existing=document.getElementById('exportFallbackModal');
+  if(existing) existing.remove();
+  const modal=document.createElement('div');
+  modal.id='exportFallbackModal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
+  modal.innerHTML=`
+    <div style="background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:1.2rem;width:100%;max-width:500px;max-height:80vh;display:flex;flex-direction:column">
+      <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold);margin-bottom:.5rem">📋 Copy Your Backup Data</div>
+      <div style="font-size:.78rem;color:var(--dim);margin-bottom:.7rem">File download didn't work on your device. <strong style="color:var(--paper2)">Copy all the text below</strong> and paste it into a notes app or email to save it.</div>
+      <textarea readonly style="flex:1;min-height:200px;background:var(--ink);border:1px solid var(--border);color:var(--paper);font-size:.65rem;padding:.5rem;font-family:monospace;resize:none">${json}</textarea>
+      <div style="display:flex;gap:.6rem;margin-top:.8rem">
+        <button class="btn btn-gold" style="flex:1" onclick="navigator.clipboard.writeText(${JSON.stringify(json).replace(/"/g,'&quot;')}).then(()=>toast('✅ Copied!'))">📋 Copy to Clipboard</button>
+        <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('exportFallbackModal').remove()">Close</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
 }
 
 function importData(input){
