@@ -1688,7 +1688,8 @@ body {
               <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.3rem">📥 Import JSON Backup</div>
               <p style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">Restore from a downloaded backup file. Merges with current data — won't delete anything.</p>
               <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(this)">
-              <button class="btn btn-ghost" style="width:100%" onclick="document.getElementById('importFile').click()">⬆ Import JSON File</button>
+              <button class="btn btn-ghost" style="width:100%;margin-bottom:.5rem" onclick="document.getElementById('importFile').click()">⬆ Import JSON File</button>
+              <button class="btn btn-primary" style="width:100%" onclick="showPasteImport()">📋 Paste & Import (from Copy to Clipboard)</button>
             </div>
             <div style="background:rgba(230,57,70,.07);border:1px solid rgba(230,57,70,.25);padding:1.2rem;border-radius:4px">
               <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.5rem;color:var(--accent2)">🗑️ Clear All Data</div>
@@ -1957,68 +1958,129 @@ let DB = {
   receipts: [],
   wantList: [],
 };
+// ── BULLETPROOF DATA PERSISTENCE ──────────────────────────
+// Uses 3 storage keys so data survives updates, clears, and corruption
+// cvp2        = main storage
+// cvp2_backup = rolling backup updated every save
+// cvp2_snap   = daily snapshot (only written once per day)
+
 function loadDB(){
+  // Try main storage first
   try{
     const s=localStorage.getItem('cvp2');
-    if(s){ const d=JSON.parse(s); DB=Object.assign(DB,d); }
+    if(s){
+      const d=JSON.parse(s);
+      if(d.comics?.length>0){
+        DB=Object.assign(DB,d);
+        return; // success
+      }
+    }
   }catch(e){}
-}
 
-function saveDB(){
+  // Main storage empty or corrupt — try rolling backup
   try{
-    localStorage.setItem('cvp2',JSON.stringify(DB));
-    // Keep a rolling auto-backup so data survives accidental clears
-    if(DB.comics.length>0){
-      localStorage.setItem('cvp2_autobackup',JSON.stringify({...DB,backedUpAt:new Date().toISOString()}));
+    const s=localStorage.getItem('cvp2_backup');
+    if(s){
+      const d=JSON.parse(s);
+      if(d.comics?.length>0){
+        DB=Object.assign(DB,d);
+        localStorage.setItem('cvp2',s); // restore main from backup
+        return;
+      }
+    }
+  }catch(e){}
+
+  // Try daily snapshot as last resort
+  try{
+    const s=localStorage.getItem('cvp2_snap');
+    if(s){
+      const d=JSON.parse(s);
+      if(d.comics?.length>0){
+        DB=Object.assign(DB,d);
+        localStorage.setItem('cvp2',s);
+        return;
+      }
     }
   }catch(e){}
 }
 
-// Called on startup — if collection is empty but auto-backup exists, offer recovery
+function saveDB(){
+  const data=JSON.stringify(DB);
+  try{ localStorage.setItem('cvp2', data); }catch(e){}
+
+  // Always keep rolling backup in sync
+  if(DB.comics.length>0){
+    try{
+      localStorage.setItem('cvp2_backup', JSON.stringify({...DB, savedAt:new Date().toISOString()}));
+    }catch(e){}
+
+    // Write daily snapshot once per day
+    try{
+      const today=new Date().toISOString().slice(0,10);
+      const snap=localStorage.getItem('cvp2_snap');
+      const snapDate=snap?JSON.parse(snap).snapDate:'';
+      if(snapDate!==today){
+        localStorage.setItem('cvp2_snap', JSON.stringify({...DB, snapDate:today}));
+      }
+    }catch(e){}
+  }
+}
+
+// On startup — silently auto-restore if main storage is empty
 function checkForRecovery(){
-  if(DB.comics.length>0) return; // all good
-  try{
-    const backup=localStorage.getItem('cvp2_autobackup');
-    if(!backup) return;
-    const data=JSON.parse(backup);
-    if(!data.comics?.length) return;
-    // Show recovery banner
-    const banner=document.createElement('div');
-    banner.id='recoveryBanner';
-    banner.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:#1a1a2e;border-bottom:2px solid var(--gold);padding:1rem 1.2rem;';
-    banner.innerHTML=`
-      <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold);margin-bottom:.4rem">
-        📦 ${data.comics.length} comics found in auto-backup from ${new Date(data.backedUpAt).toLocaleDateString()}
-      </div>
-      <div style="font-size:.8rem;color:var(--paper2);margin-bottom:.7rem">
-        Your collection appears empty — this happens when switching between Netlify and GitHub URLs. Restore your data?
-      </div>
-      <div style="display:flex;gap:.6rem;flex-wrap:wrap">
-        <button class="btn btn-gold" onclick="restoreAutoBackup()">✅ Yes — Restore ${data.comics.length} Comics</button>
-        <button class="btn btn-ghost" onclick="document.getElementById('recoveryBanner').remove()">No thanks</button>
-      </div>`;
-    document.body.appendChild(banner);
-  }catch(e){}
+  if(DB.comics.length>0) return; // all good, nothing to do
+
+  // Try to silently restore from backup without showing a banner
+  const sources=['cvp2_backup','cvp2_snap'];
+  for(const key of sources){
+    try{
+      const s=localStorage.getItem(key);
+      if(!s) continue;
+      const d=JSON.parse(s);
+      if(!d.comics?.length) continue;
+
+      // Auto-restore silently
+      DB.comics=d.comics||[];
+      DB.listings=d.listings||[];
+      DB.sold=d.sold||[];
+      DB.receipts=d.receipts||[];
+      DB.wantList=d.wantList||[];
+      localStorage.setItem('cvp2',JSON.stringify(DB));
+
+      // Show a brief toast after UI loads
+      setTimeout(()=>{
+        renderCollection(); updateStats();
+        toast(`✅ Restored ${DB.comics.length} comics from backup`,'success',4000);
+      }, 500);
+      return;
+    }catch(e){}
+  }
 }
 
 function restoreAutoBackup(){
-  try{
-    const backup=localStorage.getItem('cvp2_autobackup');
-    if(!backup) return;
-    const data=JSON.parse(backup);
-    DB.comics=data.comics||[];
-    DB.listings=data.listings||[];
-    DB.sold=data.sold||[];
-    DB.receipts=data.receipts||[];
-    DB.wantList=data.wantList||[];
-    saveDB(); renderCollection(); updateStats();
-    document.getElementById('recoveryBanner')?.remove();
-    toast(`✅ Restored ${DB.comics.length} comics!`,'success',3000);
-  }catch(e){ alert('Recovery failed: '+e.message); }
+  const sources=['cvp2_backup','cvp2_snap'];
+  for(const key of sources){
+    try{
+      const s=localStorage.getItem(key);
+      if(!s) continue;
+      const d=JSON.parse(s);
+      if(!d.comics?.length) continue;
+      DB.comics=d.comics||[];
+      DB.listings=d.listings||[];
+      DB.sold=d.sold||[];
+      DB.receipts=d.receipts||[];
+      DB.wantList=d.wantList||[];
+      saveDB(); renderCollection(); updateStats();
+      document.getElementById('recoveryBanner')?.remove();
+      toast(`✅ Restored ${DB.comics.length} comics!`,'success',3000);
+      return;
+    }catch(e){}
+  }
+  alert('No backup found. Use Settings → Data → Paste & Import if you have a copied backup.');
 }
+
 loadDB();
-// Check for recoverable data after a short delay so UI is ready
-setTimeout(checkForRecovery, 800);
+setTimeout(checkForRecovery, 600);
 
 // Toast notification system — replaces jarring alert() for success messages
 function toast(msg, type='success', duration=2500){
@@ -6244,55 +6306,105 @@ async function runSellStrategy(){
 // ══════════════════════════════════
 function exportData(){
   const payload={comics:DB.comics,listings:DB.listings,sold:DB.sold,receipts:DB.receipts,wantList:DB.wantList,exportedAt:new Date().toISOString(),version:'2.0'};
-  const json=JSON.stringify(payload,null,2);
-  try{
-    // Method 1: Standard blob download (works on desktop)
-    const blob=new Blob([json],{type:'application/json'});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;
-    a.download=`comicvault-backup-${new Date().toISOString().slice(0,10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast('✅ Backup downloaded!');
-  }catch(e){
-    // Method 2: data URI fallback (works on Android Chrome)
-    try{
-      const dataUri='data:application/json;charset=utf-8,'+encodeURIComponent(json);
-      const a=document.createElement('a');
-      a.href=dataUri;
-      a.download=`comicvault-backup-${new Date().toISOString().slice(0,10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      toast('✅ Backup downloaded!');
-    }catch(e2){
-      // Method 3: Show the JSON in a copyable text box as last resort
-      showExportFallback(json);
-    }
-  }
+  const json=JSON.stringify(payload);
+  showExportModal(json);
 }
 
-function showExportFallback(json){
-  // Show modal with copyable text if file download fails
+function showExportModal(json){
   const existing=document.getElementById('exportFallbackModal');
   if(existing) existing.remove();
+  const comicCount=DB.comics.length;
   const modal=document.createElement('div');
   modal.id='exportFallbackModal';
-  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
   modal.innerHTML=`
-    <div style="background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:1.2rem;width:100%;max-width:500px;max-height:80vh;display:flex;flex-direction:column">
-      <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold);margin-bottom:.5rem">📋 Copy Your Backup Data</div>
-      <div style="font-size:.78rem;color:var(--dim);margin-bottom:.7rem">File download didn't work on your device. <strong style="color:var(--paper2)">Copy all the text below</strong> and paste it into a notes app or email to save it.</div>
-      <textarea readonly style="flex:1;min-height:200px;background:var(--ink);border:1px solid var(--border);color:var(--paper);font-size:.65rem;padding:.5rem;font-family:monospace;resize:none">${json}</textarea>
-      <div style="display:flex;gap:.6rem;margin-top:.8rem">
-        <button class="btn btn-gold" style="flex:1" onclick="navigator.clipboard.writeText(${JSON.stringify(json).replace(/"/g,'&quot;')}).then(()=>toast('✅ Copied!'))">📋 Copy to Clipboard</button>
-        <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('exportFallbackModal').remove()">Close</button>
+    <div style="background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:1.2rem;width:100%;max-width:500px;max-height:90vh;display:flex;flex-direction:column;gap:.7rem">
+      <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;color:var(--gold)">📦 Export ${comicCount} Comics</div>
+
+      <div style="padding:.7rem .9rem;background:rgba(72,149,239,.08);border:1px solid rgba(72,149,239,.25);border-radius:4px;font-size:.78rem;color:var(--paper2);line-height:1.6">
+        <strong style="color:var(--blue)">To move to GitHub Pages:</strong><br>
+        1. Tap <strong>Copy to Clipboard</strong> below<br>
+        2. Open your GitHub Pages URL<br>
+        3. Go to ☰ → Settings → Data → <strong>Paste & Import</strong><br>
+        4. Paste and tap Import
       </div>
+
+      <!-- Copy button — primary action -->
+      <button class="btn btn-gold" style="width:100%;font-size:.95rem;padding:.8rem" onclick="
+        navigator.clipboard.writeText(${JSON.stringify(json)}).then(()=>{
+          this.textContent='✅ Copied! Now open GitHub Pages and paste';
+          this.style.background='var(--green)';
+        }).catch(()=>{
+          document.getElementById('backupTextarea').select();
+          document.execCommand('copy');
+          this.textContent='✅ Copied!';
+        })">
+        📋 Copy to Clipboard
+      </button>
+
+      <!-- Try file download too -->
+      <button class="btn btn-ghost" style="width:100%" onclick="
+        try{
+          const b=new Blob([${JSON.stringify(json)}],{type:'application/json'});
+          const u=URL.createObjectURL(b);
+          const a=document.createElement('a');
+          a.href=u; a.download='comicvault-backup.json';
+          document.body.appendChild(a); a.click();
+          document.body.removeChild(a); URL.revokeObjectURL(u);
+          this.textContent='✅ File downloaded!';
+        }catch(e){ this.textContent='⚠ Download failed — use Copy above'; }
+      ">⬇ Try File Download</button>
+
+      <!-- Scrollable text as fallback -->
+      <div style="font-size:.72rem;color:var(--dim)">Or manually select all and copy the text below:</div>
+      <textarea id="backupTextarea" readonly onclick="this.select()" style="height:80px;background:var(--ink);border:1px solid var(--border);color:var(--paper);font-size:.6rem;padding:.4rem;font-family:monospace;resize:none;border-radius:3px">${json}</textarea>
+
+      <button class="btn btn-ghost" style="width:100%" onclick="document.getElementById('exportFallbackModal').remove()">Close</button>
     </div>`;
   document.body.appendChild(modal);
+}
+
+function showPasteImport(){
+  const existing=document.getElementById('pasteImportModal');
+  if(existing) existing.remove();
+  const modal=document.createElement('div');
+  modal.id='pasteImportModal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
+  modal.innerHTML=`
+    <div style="background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:1.2rem;width:100%;max-width:500px;max-height:90vh;display:flex;flex-direction:column;gap:.7rem">
+      <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;color:var(--gold)">📥 Paste & Import</div>
+      <div style="font-size:.78rem;color:var(--dim);line-height:1.6">
+        Paste your copied backup data here. You copied it from the old URL using <strong style="color:var(--paper2)">Export → Copy to Clipboard</strong>.
+      </div>
+      <textarea id="pasteImportText" placeholder="Paste your backup data here…" style="height:150px;background:var(--ink);border:1px solid var(--border);color:var(--paper);font-size:.72rem;padding:.6rem;font-family:monospace;resize:none;border-radius:3px"></textarea>
+      <button class="btn btn-gold" style="width:100%;padding:.8rem" onclick="importFromPaste()">📥 Import Pasted Data</button>
+      <button class="btn btn-ghost" style="width:100%" onclick="document.getElementById('pasteImportModal').remove()">Cancel</button>
+    </div>`;
+  document.body.appendChild(modal);
+  setTimeout(()=>document.getElementById('pasteImportText')?.focus(),100);
+}
+
+function importFromPaste(){
+  const text=document.getElementById('pasteImportText')?.value?.trim();
+  if(!text){ toast('Paste your backup data first','error'); return; }
+  try{
+    const data=JSON.parse(text);
+    if(!data.comics) throw new Error('Not a valid ComicVault backup');
+    const merge=(existing,incoming)=>{
+      const ids=new Set(existing.map(x=>x.id));
+      return [...existing,...(incoming||[]).filter(x=>!ids.has(x.id))];
+    };
+    DB.comics=merge(DB.comics,data.comics);
+    DB.listings=merge(DB.listings,data.listings||[]);
+    DB.sold=merge(DB.sold,data.sold||[]);
+    DB.receipts=merge(DB.receipts,data.receipts||[]);
+    DB.wantList=merge(DB.wantList,data.wantList||[]);
+    saveDB(); renderCollection(); updateStats();
+    document.getElementById('pasteImportModal')?.remove();
+    toast(`✅ Imported ${data.comics.length} comics!`,'success',3000);
+  }catch(err){
+    alert('Import failed: '+err.message+'\n\nMake sure you copied the full backup from Export → Copy to Clipboard.');
+  }
 }
 
 function importData(input){
