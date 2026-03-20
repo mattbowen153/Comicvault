@@ -653,6 +653,7 @@ body {
       <div class="nav-item" data-page="inventory" onclick="nav(this)"><span class="nav-icon">📦</span> Inventory Builder <span class="nav-badge" style="background:var(--blue)">NEW</span></div>
       <div class="nav-item" data-page="crossovers" onclick="nav(this)"><span class="nav-icon">🦸</span> Crossovers & Keys</div>
       <div class="nav-section-label">Selling</div>
+      <div class="nav-item" data-page="bundle" onclick="nav(this)"><span class="nav-icon">🎁</span> Bundle Builder</div>
       <div class="nav-item" data-page="rawvsgraded" onclick="nav(this)"><span class="nav-icon">🏆</span> Raw vs Graded <span class="nav-badge" style="background:var(--purple)">NEW</span></div>
       <div class="nav-item" data-page="publish" onclick="nav(this)"><span class="nav-icon">🚀</span> Publish Hub <span class="nav-badge" id="nb-stale" style="background:var(--orange);display:none">!</span></div>
       <div class="nav-item" data-page="listings" onclick="nav(this)"><span class="nav-icon">🏷️</span> Listings <span class="nav-badge" id="nb-listings">0</span></div>
@@ -1187,6 +1188,63 @@ body {
       </div>
 
 
+      <!-- ══ BUNDLE BUILDER PAGE ══ -->
+      <div class="page" id="page-bundle">
+
+        <!-- Active bundles list -->
+        <div id="bundleListSection">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.8rem">
+            <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;letter-spacing:.5px">📦 My Bundles</div>
+            <button class="btn btn-gold btn-sm" onclick="openNewBundle()">+ New Bundle</button>
+          </div>
+          <div id="bundleList">
+            <div class="empty-state"><div class="empty-icon">📦</div><div class="empty-txt">No bundles yet — tap + New Bundle to start grouping comics for sale</div></div>
+          </div>
+        </div>
+
+        <!-- Bundle builder (shown when creating/editing) -->
+        <div id="bundleBuilder" style="display:none">
+          <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:1rem">
+            <button class="btn btn-ghost btn-sm" onclick="closeBundleBuilder()">← Back</button>
+            <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;flex:1" id="bundleBuilderTitle">New Bundle</div>
+          </div>
+
+          <!-- Bundle name -->
+          <div style="background:var(--panel);border:1px solid var(--border);padding:1rem;border-radius:4px;margin-bottom:.8rem">
+            <label class="fl">Bundle Name</label>
+            <input class="fi" id="bundleName" placeholder="e.g. Fantastic Four Lot, Marvel Bronze Age Run…">
+          </div>
+
+          <!-- Comic picker -->
+          <div style="background:var(--panel);border:1px solid var(--border);padding:1rem;border-radius:4px;margin-bottom:.8rem">
+            <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;letter-spacing:.5px;margin-bottom:.5rem">SELECT COMICS FOR THIS BUNDLE</div>
+            <input class="fi" id="bundleSearch" placeholder="Search by title…" oninput="renderBundlePicker()" style="margin-bottom:.6rem">
+            <div id="bundlePicker" style="max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:.3rem"></div>
+          </div>
+
+          <!-- Selected comics -->
+          <div style="background:var(--panel);border:1px solid var(--border);padding:1rem;border-radius:4px;margin-bottom:.8rem">
+            <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;letter-spacing:.5px;margin-bottom:.5rem">IN THIS BUNDLE (<span id="bundleCount">0</span>)</div>
+            <div id="bundleSelected">
+              <div style="font-size:.78rem;color:var(--dim);text-align:center;padding:.5rem">No comics selected yet</div>
+            </div>
+          </div>
+
+          <!-- AI Price Estimate -->
+          <div style="background:var(--panel);border:1px solid rgba(255,214,10,.2);padding:1rem;border-radius:4px;margin-bottom:.8rem">
+            <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);letter-spacing:.5px;margin-bottom:.3rem">💰 BUNDLE PRICE ESTIMATE</div>
+            <div id="bundlePriceResult" style="font-size:.8rem;color:var(--dim)">Select comics above then tap Analyze to get an AI price estimate.</div>
+            <button class="btn btn-gold" style="width:100%;margin-top:.8rem" id="analyzeBtn" onclick="analyzeBundlePrice()">🤖 Analyze Bundle Value</button>
+          </div>
+
+          <!-- Save buttons -->
+          <div style="display:flex;gap:.6rem">
+            <button class="btn btn-primary" style="flex:1" onclick="saveBundle()">💾 Save Bundle</button>
+            <button class="btn btn-ghost" onclick="closeBundleBuilder()">Cancel</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ══ RAW VS GRADED PAGE ══ -->
       <div class="page" id="page-rawvsgraded">
         <div class="info-box mb-md">
@@ -1676,8 +1734,8 @@ body {
     <nav class="bottom-nav">
       <div class="bottom-nav-items">
         <div class="bnav-item active" data-page="collection" onclick="nav(this,true)"><div class="bni">📦</div>Collection</div>
+        <div class="bnav-item" data-page="bundle" onclick="nav(this,true)"><div class="bni">🎁</div>Bundles</div>
         <div class="bnav-item" data-page="finder" onclick="nav(this,true)"><div class="bni">🎯</div>Finder</div>
-        <div class="bnav-item" data-page="inventory" onclick="nav(this,true)"><div class="bni">📦</div>Buy Lots</div>
         <div class="bnav-item" data-page="publish" onclick="nav(this,true)"><div class="bni">🚀</div>Publish</div>
         <div class="bnav-item" data-page="rawvsgraded" onclick="nav(this,true)"><div class="bni">🏆</div>Grade?</div>
       </div>
@@ -1707,6 +1765,7 @@ body {
         <div class="fg"><label class="fl">Publisher</label><input class="fi" id="i-pub" placeholder="Marvel"></div>
         <div class="fg"><label class="fl">Variant / Edition</label><input class="fi" id="i-var" placeholder="1st Print, Newsstand…"></div>
         <div class="fg"><label class="fl">Cost Paid ($)</label><input class="fi" id="i-cost" type="number" placeholder="0.00" step="0.01"></div>
+        <div class="fg"><label class="fl">📦 Storage Bin / Box</label><input class="fi" id="i-bin" placeholder="e.g. Bin 1, Box A, Shelf 3…"></div>
         <div class="fg form-full"><label class="fl">Notes / Key Issue Info</label><textarea class="fta" id="i-notes" placeholder="1st appearance, creator signature, notable features…"></textarea></div>
       </div>
       <button class="btn btn-primary btn-full mt-md" onclick="runGrade()" id="gradeBtn">🤖 AI Grade + Price + Recommendation</button>
@@ -2018,6 +2077,7 @@ function nav(el, isMobile=false){
   if(page==='sold'){ renderSold(); updateSoldStats(); refreshLotSelector(); }
   if(page==='tax') renderTax();
   if(page==='reports') renderReports();
+  if(page==='bundle'){ renderBundleList(); }
   if(page==='rawvsgraded') populateRvGDropdown();
   if(page==='publish') populatePublishDropdowns();
   if(page==='finder') renderWantListFinder();
@@ -2247,8 +2307,25 @@ function openDetail(id){
         <button class="btn btn-primary" style="flex:1" onclick="closeModal('detailModal');openEdit('${id}')">✏️ Edit</button>
         <button class="btn btn-gold" style="flex:1" onclick="closeModal('detailModal');openSell('${id}')">🏷️ List for Sale</button>
         <button class="btn btn-ghost" style="flex:1" onclick="closeModal('detailModal');openEdit('${id}');setTimeout(()=>runGrade(),300)">🤖 AI Grade</button>
+        <button class="btn btn-ghost" style="flex:1;color:var(--blue);border-color:rgba(72,149,239,.3)" onclick="closeModal('detailModal');addComicToBundle('${id}')">📦 Add to Bundle</button>
         ${cover?`<button class="btn btn-ghost" style="flex:1" onclick="saveCleanCover('${id}','${cover.replace(/'/g,"\\'")}')">💾 Save Cover</button>`:''}
         <button class="btn btn-ghost" style="flex:1;color:var(--accent2);border-color:rgba(230,57,70,.3)" onclick="closeModal('detailModal');deleteComic('${id}')">🗑️ Delete</button>
+      </div>
+
+      <!-- Bin location -->
+      <div style="margin-top:.8rem;padding:.7rem 1rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px">
+        <div style="display:flex;align-items:center;gap:.8rem">
+          <div style="font-size:1.3rem">📦</div>
+          <div style="flex:1">
+            <div style="font-size:.7rem;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);font-family:'Barlow Condensed'">Storage Location</div>
+            <div id="binDisplay_${id}" style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:${c.bin?'var(--gold)':'var(--dim)'}">
+              ${c.bin||'Not assigned'}
+            </div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="assignBin('${id}')">
+            ${c.bin?'✏️ Change':'+ Assign Bin'}
+          </button>
+        </div>
       </div>`;
   };
 
@@ -2388,6 +2465,7 @@ function openEdit(id){
   document.getElementById('i-pub').value=c.publisher||'';
   document.getElementById('i-var').value=c.variant||'';
   document.getElementById('i-cost').value=c.cost||'';
+  document.getElementById('i-bin').value=c.bin||'';
   document.getElementById('i-notes').value=c.notes||'';
   document.getElementById('i-grade').value=c.grade||'';
   document.getElementById('i-price').value=c.price||'';
@@ -2398,7 +2476,7 @@ function openEdit(id){
   openModal('addModal');
 }
 function clearForm(){
-  ['i-title','i-issue','i-volume','i-releasedate','i-year','i-pub','i-var','i-cost','i-notes','i-price'].forEach(id=>document.getElementById(id).value='');
+  ['i-title','i-issue','i-volume','i-releasedate','i-year','i-pub','i-var','i-cost','i-bin','i-notes','i-price'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('i-grade').value=''; document.getElementById('i-rec').value='';
   document.getElementById('gradeOut').style.display='none';
   document.getElementById('imgPreviewWrap').style.display='none';
@@ -2423,6 +2501,7 @@ function saveComic(andList=false){
     publisher:document.getElementById('i-pub').value,
     variant:document.getElementById('i-var').value,
     cost:document.getElementById('i-cost').value,
+    bin:document.getElementById('i-bin').value,
     notes:document.getElementById('i-notes').value,
     grade:document.getElementById('i-grade').value,
     price:document.getElementById('i-price').value,
@@ -2725,6 +2804,437 @@ function addBundleToWantList(issues, title, publisher){
   document.getElementById('wantCount').textContent=DB.wantList.length;
   toast(`⭐ Added ${added} bundle issues to Want List`);
 }
+
+// ══════════════════════════════════
+//  BUNDLE BUILDER
+// ══════════════════════════════════
+let bundles = [];
+let currentBundle = { id:null, name:'', comicIds:[], createdAt:null };
+let bundleEditMode = false;
+
+try{ bundles=JSON.parse(localStorage.getItem('cvp_bundles')||'[]'); }catch(e){}
+function saveBundles(){ try{ localStorage.setItem('cvp_bundles',JSON.stringify(bundles)); }catch(e){} }
+
+function renderBundleList(){
+  const div=document.getElementById('bundleList'); if(!div) return;
+
+  // Smart auto-grouping — find series with 2+ issues
+  const seriesMap={};
+  DB.comics.forEach(c=>{
+    const key=c.title.toLowerCase();
+    if(!seriesMap[key]) seriesMap[key]={title:c.title,publisher:c.publisher,comics:[]};
+    seriesMap[key].comics.push(c);
+  });
+  const bundleable=Object.values(seriesMap).filter(s=>s.comics.length>=2);
+  // Find which ones aren't already in a bundle
+  const bundledTitles=new Set(bundles.flatMap(b=>b.comicIds.map(id=>DB.comics.find(c=>c.id===id)?.title?.toLowerCase()).filter(Boolean)));
+  const suggestions=bundleable.filter(s=>!bundledTitles.has(s.title.toLowerCase())).slice(0,3);
+
+  let suggestHtml='';
+  if(suggestions.length){
+    suggestHtml=`
+      <div style="margin-bottom:1rem;padding:.8rem 1rem;background:rgba(255,214,10,.05);border:1px solid rgba(255,214,10,.2);border-radius:4px">
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);letter-spacing:.5px;margin-bottom:.5rem">💡 SUGGESTED BUNDLES FROM YOUR COLLECTION</div>
+        ${suggestions.map(s=>{
+          const total=s.comics.reduce((sum,c)=>sum+(parseFloat(c.price)||0),0);
+          const ids=s.comics.map(c=>c.id);
+          const safeTitle=s.title.replace(/'/g,"\\'");
+          return `<div style="display:flex;align-items:center;gap:.8rem;padding:.5rem 0;border-bottom:1px solid rgba(255,255,255,.05)">
+            <div style="flex:1">
+              <div style="font-size:.82rem;font-weight:600;color:var(--paper)">${s.title}</div>
+              <div style="font-size:.72rem;color:var(--dim)">${s.comics.length} issues · ${s.publisher||'?'} · individual value $${total.toFixed(0)}</div>
+              <div style="font-size:.7rem;color:var(--dim);margin-top:.1rem">${s.comics.map(c=>'#'+cleanIssue(c.issue)).join(', ')}</div>
+            </div>
+            <button class="btn btn-gold btn-sm" onclick="quickCreateBundle('${safeTitle}','${s.publisher||''}',${JSON.stringify(ids)})">+ Bundle</button>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  if(!bundles.length){
+    div.innerHTML=suggestHtml+`<div class="empty-state"><div class="empty-icon">📦</div><div class="empty-txt">No bundles yet — tap + New Bundle or use a suggestion above</div></div>`;
+    return;
+  }
+  div.innerHTML=suggestHtml+bundles.map(b=>{
+    const comics=b.comicIds.map(id=>DB.comics.find(c=>c.id===id)).filter(Boolean);
+    const totalVal=comics.reduce((s,c)=>s+(parseFloat(c.price)||0),0);
+    const publishers=[...new Set(comics.map(c=>c.publisher).filter(Boolean))];
+    return `<div style="background:var(--panel);border:1px solid var(--border);padding:1rem;border-radius:4px;margin-bottom:.7rem">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.8rem;margin-bottom:.6rem">
+        <div>
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem">${b.name||'Unnamed Bundle'}</div>
+          <div style="font-size:.75rem;color:var(--dim)">${comics.length} comic${comics.length!==1?'s':''} · ${publishers.join(', ')||'Mixed'}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-family:'Bebas Neue';font-size:1.4rem;color:var(--gold);line-height:1">$${totalVal.toFixed(0)}</div>
+          <div style="font-size:.62rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase">individual val</div>
+        </div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:.7rem">
+        ${comics.slice(0,6).map(c=>`<span style="font-size:.72rem;padding:.2rem .5rem;background:rgba(255,255,255,.06);border-radius:3px;color:var(--paper2)">${c.title} #${cleanIssue(c.issue)}</span>`).join('')}
+        ${comics.length>6?`<span style="font-size:.72rem;color:var(--dim);padding:.2rem .4rem">+${comics.length-6} more</span>`:''}
+      </div>
+      ${b.aiEstimate?`<div style="padding:.5rem .7rem;background:rgba(255,214,10,.06);border:1px solid rgba(255,214,10,.2);border-radius:3px;margin-bottom:.6rem;font-size:.78rem">
+        💰 <strong style="color:var(--gold)">Bundle estimate: ${b.aiEstimate}</strong>${b.aiPlatform?' · '+b.aiPlatform:''}
+      </div>`:''}
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <button class="btn btn-gold btn-sm" style="flex:1" onclick="analyzeBundlePrice('${b.id}')">💰 Get Price Estimate</button>
+        <button class="btn btn-primary btn-sm" style="flex:1" onclick="generateBundleListing('${b.id}')">📝 Create Listing</button>
+        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="editBundle('${b.id}')">✏️ Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteBundle('${b.id}')" style="color:var(--accent2)">🗑️</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function quickCreateBundle(title, publisher, ids){
+  currentBundle={id:Date.now().toString(),name:title+' Bundle',comicIds:ids,createdAt:new Date().toISOString()};
+  bundleEditMode=false;
+  bundles.unshift({...currentBundle});
+  saveBundles();
+  renderBundleList();
+  toast(`✅ Bundle created for ${title}`);
+}
+
+function openNewBundle(){
+  currentBundle={id:Date.now().toString(),name:'',comicIds:[],createdAt:new Date().toISOString()};
+  bundleEditMode=false;
+  document.getElementById('bundleBuilderTitle').textContent='New Bundle';
+  document.getElementById('bundleName').value='';
+  document.getElementById('bundlePriceResult').innerHTML='Select comics above then tap Analyze to get an AI price estimate.';
+  document.getElementById('bundlePriceResult').style.color='var(--dim)';
+  document.getElementById('bundleListSection').style.display='none';
+  document.getElementById('bundleBuilder').style.display='block';
+  document.getElementById('bundleSearch').value='';
+  renderBundlePicker(); renderBundleSelected();
+}
+
+function editBundle(id){
+  const b=bundles.find(x=>x.id===id); if(!b) return;
+  currentBundle={...b,comicIds:[...b.comicIds]};
+  bundleEditMode=true;
+  document.getElementById('bundleBuilderTitle').textContent='Edit Bundle';
+  document.getElementById('bundleName').value=b.name||'';
+  document.getElementById('bundlePriceResult').innerHTML=b.aiEstimate?`Last estimate: <strong style="color:var(--gold)">${b.aiEstimate}</strong> — tap Re-Analyze for fresh data`:'Tap Analyze for a price estimate.';
+  document.getElementById('bundleListSection').style.display='none';
+  document.getElementById('bundleBuilder').style.display='block';
+  document.getElementById('bundleSearch').value='';
+  renderBundlePicker(); renderBundleSelected();
+}
+
+function closeBundleBuilder(){
+  document.getElementById('bundleBuilder').style.display='none';
+  document.getElementById('bundleListSection').style.display='block';
+  renderBundleList();
+}
+
+function renderBundlePicker(){
+  const q=(document.getElementById('bundleSearch')?.value||'').toLowerCase();
+  const div=document.getElementById('bundlePicker'); if(!div) return;
+  const comics=DB.comics.filter(c=>!q||c.title.toLowerCase().includes(q)||(cleanIssue(c.issue)||'').includes(q));
+  if(!comics.length){ div.innerHTML=`<div style="font-size:.78rem;color:var(--dim);text-align:center;padding:.5rem">No comics found</div>`; return; }
+  div.innerHTML=comics.map(c=>{
+    const inBundle=currentBundle.comicIds.includes(c.id);
+    return `<div style="display:flex;align-items:center;gap:.7rem;padding:.45rem .6rem;background:${inBundle?'rgba(255,214,10,.08)':'rgba(255,255,255,.03)'};border:1px solid ${inBundle?'rgba(255,214,10,.3)':'var(--border)'};border-radius:3px;cursor:pointer;margin-bottom:.25rem" onclick="toggleBundleComic('${c.id}')">
+      ${c.coverUrl||c.image?`<img src="${c.coverUrl||c.image}" style="width:28px;height:42px;object-fit:cover;flex-shrink:0;border-radius:2px">`:`<div style="width:28px;height:42px;background:var(--border);display:grid;place-items:center;font-size:.9rem;flex-shrink:0;border-radius:2px">📔</div>`}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.title} <span style="color:var(--dim)">#${cleanIssue(c.issue)}</span></div>
+        <div style="font-size:.7rem;color:var(--dim)">${c.grade||'?'} · ${c.publisher||'?'}${c.price?' · $'+c.price:''}</div>
+      </div>
+      <div style="font-size:1.2rem;flex-shrink:0">${inBundle?'✅':'⭕'}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleBundleComic(id){
+  const idx=currentBundle.comicIds.indexOf(id);
+  if(idx===-1) currentBundle.comicIds.push(id);
+  else currentBundle.comicIds.splice(idx,1);
+  renderBundlePicker(); renderBundleSelected();
+}
+
+function renderBundleSelected(){
+  const div=document.getElementById('bundleSelected'); if(!div) return;
+  document.getElementById('bundleCount').textContent=currentBundle.comicIds.length;
+  if(!currentBundle.comicIds.length){
+    div.innerHTML=`<div style="font-size:.78rem;color:var(--dim);text-align:center;padding:.5rem">No comics selected yet</div>`;
+    return;
+  }
+  const comics=currentBundle.comicIds.map(id=>DB.comics.find(c=>c.id===id)).filter(Boolean);
+  const total=comics.reduce((s,c)=>s+(parseFloat(c.price)||0),0);
+  div.innerHTML=`
+    ${comics.map(c=>`<div style="display:flex;align-items:center;gap:.6rem;padding:.35rem .4rem;border-bottom:1px solid rgba(255,255,255,.04)">
+      <div style="flex:1;font-size:.78rem;color:var(--paper2)"><strong>${c.title}</strong> #${cleanIssue(c.issue)} <span style="color:var(--dim)">${c.grade?'· '+c.grade:''}</span></div>
+      <div style="font-size:.75rem;color:var(--gold)">${c.price?'$'+c.price:''}</div>
+      <button onclick="toggleBundleComic('${c.id}')" style="background:none;border:none;color:var(--accent2);cursor:pointer;font-size:.9rem;padding:.1rem .3rem">✕</button>
+    </div>`).join('')}
+    <div style="text-align:right;font-size:.75rem;color:var(--dim);padding:.4rem .2rem 0">
+      Individual total: <strong style="color:var(--paper2)">$${total.toFixed(2)}</strong>
+    </div>`;
+}
+
+async function analyzeBundlePrice(bundleId){
+  // Can be called from bundle list (with id) or from builder (no id)
+  let targetBundle = bundleId ? bundles.find(b=>b.id===bundleId) : currentBundle;
+  if(!targetBundle) return;
+  const resultDiv = bundleId
+    ? document.createElement('div') // temporary for list view
+    : document.getElementById('bundlePriceResult');
+  const btn = document.getElementById('analyzeBtn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Analyzing…'; }
+  if(resultDiv) resultDiv.innerHTML=`<div class="spin-wrap" style="padding:.6rem"><div class="spin"></div><div class="pulse-txt">Analyzing bundle…</div></div>`;
+
+  const comics=targetBundle.comicIds.map(id=>DB.comics.find(c=>c.id===id)).filter(Boolean);
+  if(!comics.length){ toast('No comics in this bundle','error'); if(btn){btn.disabled=false;btn.textContent='🤖 Analyze Bundle Value';} return; }
+  if(!apiKeys.anthropic){ toast('Anthropic API key needed','error'); if(btn){btn.disabled=false;btn.textContent='🤖 Analyze Bundle Value';} return; }
+
+  const comicList=comics.map(c=>`${c.title} #${cleanIssue(c.issue)} ${c.year?'('+c.year+')':''} ${c.grade||''} ${c.price?'~$'+c.price:''}`).join('\n');
+  const individualTotal=comics.reduce((s,c)=>s+(parseFloat(c.price)||0),0);
+
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:anthropicHeaders(),
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:600,
+        messages:[{role:'user',content:`Analyze this comic bundle for sale value:
+
+${comicList}
+
+Individual total: $${individualTotal.toFixed(2)}
+
+Give realistic bundle selling price. Bundle price is usually 60-80% of individual total for commons, can be higher for key issues or cohesive runs.
+
+Respond ONLY with JSON:
+{
+  "bundle_price_low": 25,
+  "bundle_price_mid": 35,
+  "bundle_price_high": 45,
+  "vs_individual": "Bundle gets $35 vs $42 individual but sells in days not weeks",
+  "cohesion_score": 8,
+  "cohesion_reason": "Strong — all Fantastic Four, run collectors want these together",
+  "target_buyer": "Fantastic Four run collectors, Copper Age Marvel fans",
+  "best_platform": "eBay BIN",
+  "listing_title": "Fantastic Four Bronze Age Lot #23 48 57 VF/FN",
+  "sell_recommendation": "bundle",
+  "recommendation_reason": "These sell faster as a lot and attract serious collectors",
+  "tips": "One tip to increase bundle value"
+}`}]})});
+    const data=await res.json();
+    const txt=data.content?.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+    const d=JSON.parse(txt);
+
+    // Save to bundle
+    const bIdx=bundles.findIndex(b=>b.id===(bundleId||currentBundle.id));
+    if(bIdx!==-1){
+      bundles[bIdx].aiEstimate=`$${d.bundle_price_low}–$${d.bundle_price_high}`;
+      bundles[bIdx].aiPlatform=d.best_platform;
+      bundles[bIdx].aiData=d;
+      saveBundles();
+    } else if(!bundleId){
+      currentBundle.aiEstimate=`$${d.bundle_price_low}–$${d.bundle_price_high}`;
+      currentBundle.aiPlatform=d.best_platform;
+      currentBundle.aiData=d;
+    }
+
+    const html=`
+      <div>
+        <div style="display:flex;gap:.8rem;margin-bottom:.6rem;flex-wrap:wrap">
+          <div style="text-align:center;flex:1"><div style="font-size:.62rem;color:var(--dim);text-transform:uppercase">Low</div><div style="font-family:'Bebas Neue';font-size:1.5rem;color:var(--paper2)">$${d.bundle_price_low}</div></div>
+          <div style="text-align:center;flex:1"><div style="font-size:.62rem;color:var(--dim);text-transform:uppercase">Best</div><div style="font-family:'Bebas Neue';font-size:1.8rem;color:var(--gold)">$${d.bundle_price_mid}</div></div>
+          <div style="text-align:center;flex:1"><div style="font-size:.62rem;color:var(--dim);text-transform:uppercase">High</div><div style="font-family:'Bebas Neue';font-size:1.5rem;color:var(--paper2)">$${d.bundle_price_high}</div></div>
+          <div style="text-align:center;flex:1"><div style="font-size:.62rem;color:var(--dim);text-transform:uppercase">Individual</div><div style="font-family:'Bebas Neue';font-size:1.5rem;color:var(--dim)">$${individualTotal.toFixed(0)}</div></div>
+        </div>
+        <div style="font-size:.78rem;color:var(--paper2);padding:.5rem .6rem;background:rgba(255,255,255,.04);border-radius:3px;margin-bottom:.4rem">${d.recommendation_reason}</div>
+        ${d.vs_individual?`<div style="font-size:.73rem;color:var(--dim);margin-bottom:.3rem">💡 ${d.vs_individual}</div>`:''}
+        ${d.target_buyer?`<div style="font-size:.73rem;color:var(--dim);margin-bottom:.3rem">👤 ${d.target_buyer}</div>`:''}
+        ${d.best_platform?`<div style="font-size:.73rem;color:var(--paper2);margin-bottom:.3rem">✅ Best on: <strong>${d.best_platform}</strong></div>`:''}
+        ${d.listing_title?`<div style="font-size:.72rem;color:var(--blue);margin-bottom:.3rem">📝 "${d.listing_title}"</div>`:''}
+        ${d.tips?`<div style="font-size:.72rem;color:var(--gold)">💡 ${d.tips}</div>`:''}
+      </div>`;
+
+    if(resultDiv) resultDiv.innerHTML=html;
+    // If called from list view, refresh list to show estimate
+    if(bundleId) renderBundleList();
+
+  }catch(e){
+    if(resultDiv) resultDiv.innerHTML=`<div style="color:var(--accent2);font-size:.78rem">⚠ Could not analyze. Try again.</div>`;
+  }
+  if(btn){ btn.disabled=false; btn.textContent='🤖 Re-Analyze Bundle'; }
+}
+
+function saveBundle(){
+  const name=document.getElementById('bundleName').value.trim();
+  if(!name){ toast('Give your bundle a name first','error'); return; }
+  if(!currentBundle.comicIds.length){ toast('Add at least one comic','error'); return; }
+  currentBundle.name=name;
+  if(bundleEditMode){
+    const idx=bundles.findIndex(b=>b.id===currentBundle.id);
+    if(idx!==-1) bundles[idx]={...currentBundle};
+    else bundles.unshift({...currentBundle});
+  } else {
+    bundles.unshift({...currentBundle});
+  }
+  saveBundles(); closeBundleBuilder();
+  toast(`✅ Bundle "${name}" saved`);
+}
+
+function deleteBundle(id){
+  if(!confirm('Delete this bundle? Your comics stay in your collection.')) return;
+  bundles=bundles.filter(b=>b.id!==id);
+  saveBundles(); renderBundleList();
+  toast('Bundle deleted');
+}
+
+
+function addToBundleConfirm(comicId, bundleId, bundleName){
+  const idx=bundles.findIndex(b=>b.id===bundleId); if(idx===-1) return;
+  if(!bundles[idx].comicIds.includes(comicId)){
+    bundles[idx].comicIds.push(comicId);
+    saveBundles();
+  }
+  document.getElementById('addToBundleModal')?.remove();
+  toast(`✅ Added to "${bundleName}"`);
+  // Ask if they want to go to the bundle
+  const goNow = confirm(`Added to "${bundleName}"! Go to Bundle Builder to see it?`);
+  if(goNow){ nav(document.querySelector('[data-page="bundle"]')); }
+}
+
+function createBundleWithComic(comicId){
+  const name=document.getElementById('newBundleNameInput')?.value.trim();
+  if(!name){ toast('Enter a bundle name first','error'); return; }
+  const c=DB.comics.find(x=>x.id===comicId);
+  const newBundle={id:Date.now().toString(),name,comicIds:[comicId],createdAt:new Date().toISOString()};
+  bundles.unshift(newBundle);
+  saveBundles();
+  document.getElementById('addToBundleModal')?.remove();
+  toast(`✅ Bundle "${name}" created!`);
+  const goNow = confirm(`Bundle "${name}" created with ${c?.title||'this comic'}! Go to Bundle Builder now?`);
+  if(goNow){ nav(document.querySelector('[data-page="bundle"]')); }
+}
+
+async function generateBundleListing(bundleId){
+  const b=bundles.find(x=>x.id===bundleId); if(!b) return;
+  const comics=b.comicIds.map(id=>DB.comics.find(c=>c.id===id)).filter(Boolean);
+  if(!comics.length){ toast('No comics in bundle','error'); return; }
+  if(!apiKeys.anthropic){ toast('Anthropic key needed','error'); return; }
+
+  toast('✍️ Generating listing…','info',3000);
+  const comicList=comics.map(c=>`${c.title} #${cleanIssue(c.issue)} ${c.year?'('+c.year+')':''} Grade: ${c.grade||'ungraded'}${c.variant?' ['+c.variant+']':''}`).join('\n');
+  const estimate=b.aiEstimate||'unknown';
+
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:anthropicHeaders(),
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:600,
+        messages:[{role:'user',content:`Write a complete eBay listing for this comic bundle:
+
+Bundle name: ${b.name}
+Comics included:
+${comicList}
+Estimated price: ${estimate}
+
+Write a compelling listing. Respond ONLY with JSON:
+{
+  "title": "eBay listing title under 80 chars with key words",
+  "description": "3-4 sentence description highlighting the comics, condition, and why a collector wants this lot",
+  "keywords": "comma separated search keywords",
+  "condition": "Used/Good or Very Good etc",
+  "shipping_note": "Ships bagged and boarded in a rigid mailer"
+}`}]})});
+    const data=await res.json();
+    const txt=data.content?.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+    const d=JSON.parse(txt);
+
+    const existing=document.getElementById('bundleListingModal');
+    if(existing) existing.remove();
+    const modal=document.createElement('div');
+    modal.id='bundleListingModal';
+    modal.className='modal-bg';
+    modal.style.cssText='display:flex';
+    modal.innerHTML=`
+      <div class="modal" style="max-width:480px">
+        <div class="modal-hdr">
+          <div class="modal-title">📝 Bundle Listing</div>
+          <button class="modal-x" onclick="document.getElementById('bundleListingModal').remove()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="margin-bottom:.8rem">
+            <div style="font-size:.7rem;letter-spacing:1.5px;color:var(--dim);font-family:'Barlow Condensed';margin-bottom:.3rem">EBAY TITLE — tap to copy</div>
+            <div style="background:var(--ink2);border:1px solid var(--border);padding:.6rem .8rem;font-size:.82rem;color:var(--paper);border-radius:3px;cursor:pointer" onclick="copyText(this,'Title')">${d.title}</div>
+          </div>
+          <div style="margin-bottom:.8rem">
+            <div style="font-size:.7rem;letter-spacing:1.5px;color:var(--dim);font-family:'Barlow Condensed';margin-bottom:.3rem">DESCRIPTION — tap to copy</div>
+            <div style="background:var(--ink2);border:1px solid var(--border);padding:.6rem .8rem;font-size:.8rem;color:var(--paper);line-height:1.6;border-radius:3px;cursor:pointer" onclick="copyText(this,'Description')">${d.description}<br><br>${d.shipping_note||''}</div>
+          </div>
+          <div style="margin-bottom:.8rem">
+            <div style="font-size:.7rem;letter-spacing:1.5px;color:var(--dim);font-family:'Barlow Condensed';margin-bottom:.3rem">KEYWORDS — tap to copy</div>
+            <div style="background:var(--ink2);border:1px solid var(--border);padding:.6rem .8rem;font-size:.75rem;color:var(--dim);border-radius:3px;cursor:pointer" onclick="copyText(this,'Keywords')">${d.keywords||''}</div>
+          </div>
+          <div style="font-size:.72rem;color:var(--dim);text-align:center;margin-bottom:.8rem">Tap any section to copy · Use these on eBay, Facebook, or MyComicShop</div>
+          <div style="display:flex;gap:.6rem">
+            <button class="btn btn-gold" style="flex:1" onclick="copyText(document.querySelector('#bundleListingModal .modal-body'),'Full Listing')">📋 Copy All</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('bundleListingModal').remove()">Done</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  }catch(e){
+    toast('Could not generate listing','error');
+  }
+}
+
+function copyText(el, label){
+  const text=el.innerText||el.textContent;
+  navigator.clipboard.writeText(text).then(()=>toast(`✅ ${label} copied!`)).catch(()=>{
+    const r=document.createRange(); r.selectNode(el);
+    window.getSelection().removeAllRanges(); window.getSelection().addRange(r);
+    document.execCommand('copy');
+    window.getSelection().removeAllRanges();
+    toast(`✅ ${label} copied!`);
+  });
+}
+
+function addComicToBundle(comicId){
+  if(!bundles.length){
+    const c=DB.comics.find(x=>x.id===comicId); if(!c) return;
+    if(!confirm('No bundles yet. Create a new bundle with this comic?')) return;
+    currentBundle={id:Date.now().toString(),name:c.title+' Bundle',comicIds:[comicId],createdAt:new Date().toISOString()};
+    bundles.unshift({...currentBundle});
+    saveBundles();
+    toast(`✅ New bundle created with ${c.title} #${cleanIssue(c.issue)}`);
+    return;
+  }
+  const existing=document.getElementById('addToBundleModal');
+  if(existing) existing.remove();
+  const modal=document.createElement('div');
+  modal.id='addToBundleModal';
+  modal.className='modal-bg';
+  modal.style.cssText='display:flex';
+  modal.innerHTML=`
+    <div class="modal" style="max-width:360px">
+      <div class="modal-hdr">
+        <div class="modal-title">📦 Add to Bundle</div>
+        <button class="modal-x" onclick="document.getElementById('addToBundleModal').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">Which bundle?</div>
+        ${bundles.map(b=>`<div style="padding:.7rem 1rem;background:var(--panel);border:1px solid var(--border);border-radius:4px;margin-bottom:.5rem;cursor:pointer" onclick="quickAddToBundle('${comicId}','${b.id}')">
+          <div style="font-weight:700;font-size:.85rem">${b.name}</div>
+          <div style="font-size:.72rem;color:var(--dim)">${b.comicIds.length} comics</div>
+        </div>`).join('')}
+        <button class="btn btn-ghost" style="width:100%;margin-top:.3rem" onclick="document.getElementById('addToBundleModal').remove()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function quickAddToBundle(comicId, bundleId){
+  const b=bundles.find(x=>x.id===bundleId); if(!b) return;
+  if(!b.comicIds.includes(comicId)){ b.comicIds.push(comicId); saveBundles(); }
+  document.getElementById('addToBundleModal')?.remove();
+  const c=DB.comics.find(x=>x.id===comicId);
+  toast(`✅ Added to "${b.name}"`);
+}
+
+function quickAssignBin(id, bin){ saveBin(id, bin); }
+
 function openSell(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   sellId=id;
@@ -2864,16 +3374,6 @@ function renderListings(){
 }
 function setListingFilter(f,el){ listingFilter=f; document.querySelectorAll('#page-listings .chip').forEach(c=>c.classList.remove('on')); el.classList.add('on'); renderListings(); }
 function removeListing(id){ DB.listings=DB.listings.filter(l=>l.id!==id); saveDB(); renderListings(); updateStats(); }
-function markSold(lid){
-  const l=DB.listings.find(x=>x.id===lid); if(!l) return;
-  const sp=prompt(`Sold price? (Listed: $${l.price})`,l.price); if(sp===null) return;
-  DB.sold.push({...l,soldPrice:sp,soldAt:new Date().toISOString()});
-  DB.listings=DB.listings.filter(x=>x.id!==lid);
-  // auto-add receipt for platform fee
-  const fee=parseFloat(sp)*0.1;
-  DB.receipts.push({id:Date.now().toString(),desc:`Platform fee — ${l.title} #${l.issue}`,amount:fee.toFixed(2),date:new Date().toISOString().slice(0,10),category:'fees',notes:'Auto-logged'});
-  saveDB(); renderListings(); updateStats();
-}
 
 // ══════════════════════════════════
 //  SOLD
