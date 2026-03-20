@@ -1658,9 +1658,24 @@ body {
 
         <div class="tab-pane" id="st-data">
           <div style="padding:.8rem 1rem;background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.25);border-radius:4px;margin-bottom:1rem;font-size:.8rem;line-height:1.6">
-            🔄 <strong style="color:var(--green)">Auto-backup is on</strong> — your collection is automatically saved every time you add or edit a comic. If you switch URLs or clear your browser, use the restore button below.
+            🔄 <strong style="color:var(--green)">Auto-backup is on</strong> — your collection saves to 3 local slots every time you add a comic. For permanent cloud backup use Google Drive below.
           </div>
           <div style="display:flex;flex-direction:column;gap:1rem;max-width:500px">
+
+            <!-- Google Drive Sync — PRIMARY backup -->
+            <div style="background:var(--panel);border:2px solid rgba(74,222,128,.3);padding:1.2rem;border-radius:4px">
+              <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;margin-bottom:.3rem;color:var(--green)">☁️ Google Drive Backup</div>
+              <p style="font-size:.8rem;color:var(--paper2);margin-bottom:.3rem">
+                Saves your collection to your Google Drive as a file. <strong style="color:var(--green)">Survives browser clears, URL changes, and app updates.</strong>
+              </p>
+              <p style="font-size:.78rem;color:var(--dim);margin-bottom:.8rem">Sign in with Google once — then tap Save to Drive after each scan session.</p>
+              <div id="gdrive-status" style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">Not connected</div>
+              <div style="display:flex;gap:.6rem;flex-wrap:wrap">
+                <button class="btn btn-primary" style="flex:1" id="gdriveSignInBtn" onclick="gdriveSignIn()">🔑 Sign in with Google</button>
+                <button class="btn btn-gold" style="flex:1;display:none" id="gdriveSaveBtn" onclick="gdriveSave()">☁️ Save to Drive</button>
+                <button class="btn btn-ghost" style="flex:1;display:none" id="gdriveLoadBtn" onclick="gdriveLoad()">⬇ Load from Drive</button>
+              </div>
+            </div>
 
             <!-- Cover Art Management -->
             <div style="background:var(--panel);border:1px solid rgba(72,149,239,.25);padding:1.2rem;border-radius:4px">
@@ -2536,7 +2551,211 @@ Provide series and variant information. Respond JSON only:
 }
 
 // Save clean cover URL to comic record
-// ── FIX COVER MODAL ──────────────────────────────────────
+// ── GOOGLE DRIVE SYNC ──────────────────────────────────────
+// Uses Google Identity Services + Drive API v3
+// Free — only requires a Google account, no billing
+const GDRIVE_CLIENT_ID = ''; // User sets this in Settings — see instructions
+const GDRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
+const GDRIVE_FILE_NAME = 'comicvault-data.json';
+let gdriveToken = null;
+let gdriveFileId = null;
+
+function gdriveSignIn(){
+  // Load Google Identity script if not loaded
+  if(!window.google?.accounts){
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.onload = ()=> gdriveSignIn();
+    document.head.appendChild(script);
+    const statusEl = document.getElementById('gdrive-status');
+    if(statusEl) statusEl.textContent = 'Loading Google Sign-In…';
+    return;
+  }
+
+  const clientId = localStorage.getItem('cvp_gdrive_client') || '';
+  if(!clientId){
+    showGdriveSetup();
+    return;
+  }
+
+  try{
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: GDRIVE_SCOPES,
+      callback: (resp)=>{
+        if(resp.error){ updateGdriveStatus('error','Sign in failed: '+resp.error); return; }
+        gdriveToken = resp.access_token;
+        updateGdriveStatus('connected','✅ Connected to Google Drive');
+        document.getElementById('gdriveSignInBtn').style.display='none';
+        document.getElementById('gdriveSaveBtn').style.display='block';
+        document.getElementById('gdriveLoadBtn').style.display='block';
+        // Auto-save on connect
+        gdriveSave();
+      }
+    });
+    client.requestAccessToken();
+  }catch(e){
+    updateGdriveStatus('error','Sign in error: '+e.message);
+  }
+}
+
+async function gdriveSave(){
+  if(!gdriveToken){ toast('Sign in to Google Drive first','error'); return; }
+  const btn=document.getElementById('gdriveSaveBtn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Saving…'; }
+  updateGdriveStatus('saving','Saving to Google Drive…');
+
+  try{
+    const payload=JSON.stringify({...DB, savedAt:new Date().toISOString(), version:'2.0'});
+
+    // Check if file already exists
+    if(!gdriveFileId){
+      const listRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${GDRIVE_FILE_NAME}'`,
+        {headers:{Authorization:'Bearer '+gdriveToken}}
+      );
+      const listData = await listRes.json();
+      if(listData.files?.length) gdriveFileId = listData.files[0].id;
+    }
+
+    let res;
+    if(gdriveFileId){
+      // Update existing file
+      res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${gdriveFileId}?uploadType=media`,{
+        method:'PATCH',
+        headers:{Authorization:'Bearer '+gdriveToken,'Content-Type':'application/json'},
+        body:payload
+      });
+    } else {
+      // Create new file
+      const meta = {name:GDRIVE_FILE_NAME, parents:['appDataFolder']};
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(meta)],{type:'application/json'}));
+      form.append('file', new Blob([payload],{type:'application/json'}));
+      res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',{
+        method:'POST',
+        headers:{Authorization:'Bearer '+gdriveToken},
+        body:form
+      });
+      const created = await res.json();
+      gdriveFileId = created.id;
+    }
+
+    if(res.ok){
+      updateGdriveStatus('connected',`✅ Saved to Google Drive — ${DB.comics.length} comics — ${new Date().toLocaleTimeString()}`);
+      toast('☁️ Saved to Google Drive!');
+      localStorage.setItem('cvp_gdrive_lastSave', new Date().toISOString());
+    } else {
+      updateGdriveStatus('error','Save failed — try signing in again');
+    }
+  }catch(e){
+    updateGdriveStatus('error','Save failed: '+e.message);
+  }
+  if(btn){ btn.disabled=false; btn.textContent='☁️ Save to Drive'; }
+}
+
+async function gdriveLoad(){
+  if(!gdriveToken){ toast('Sign in to Google Drive first','error'); return; }
+  const btn=document.getElementById('gdriveLoadBtn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Loading…'; }
+
+  try{
+    if(!gdriveFileId){
+      const listRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${GDRIVE_FILE_NAME}'`,
+        {headers:{Authorization:'Bearer '+gdriveToken}}
+      );
+      const listData = await listRes.json();
+      if(!listData.files?.length){
+        toast('No backup found on Google Drive yet','info');
+        if(btn){ btn.disabled=false; btn.textContent='⬇ Load from Drive'; }
+        return;
+      }
+      gdriveFileId = listData.files[0].id;
+    }
+
+    const res = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${gdriveFileId}?alt=media`,
+      {headers:{Authorization:'Bearer '+gdriveToken}}
+    );
+    const data = await res.json();
+    if(!data.comics){ toast('Invalid backup file','error'); return; }
+
+    if(!confirm(`Load ${data.comics.length} comics from Google Drive? This will merge with your current collection.`)) return;
+
+    const merge=(existing,incoming)=>{
+      const ids=new Set(existing.map(x=>x.id));
+      return [...existing,...(incoming||[]).filter(x=>!ids.has(x.id))];
+    };
+    DB.comics=merge(DB.comics,data.comics);
+    DB.listings=merge(DB.listings,data.listings||[]);
+    DB.sold=merge(DB.sold,data.sold||[]);
+    DB.receipts=merge(DB.receipts,data.receipts||[]);
+    DB.wantList=merge(DB.wantList,data.wantList||[]);
+    saveDB(); renderCollection(); updateStats();
+    toast(`☁️ Loaded ${data.comics.length} comics from Google Drive!`,'success',3000);
+    updateGdriveStatus('connected',`✅ Loaded from Google Drive — ${data.comics.length} comics`);
+  }catch(e){
+    toast('Load failed: '+e.message,'error');
+  }
+  if(btn){ btn.disabled=false; btn.textContent='⬇ Load from Drive'; }
+}
+
+function updateGdriveStatus(state, msg){
+  const el=document.getElementById('gdrive-status'); if(!el) return;
+  const colors={connected:'var(--green)',error:'var(--accent2)',saving:'var(--gold)',default:'var(--dim)'};
+  el.style.color = colors[state]||colors.default;
+  el.textContent = msg;
+}
+
+function showGdriveSetup(){
+  const existing=document.getElementById('gdriveSetupModal');
+  if(existing) existing.remove();
+  const modal=document.createElement('div');
+  modal.id='gdriveSetupModal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem';
+  modal.innerHTML=`
+    <div style="background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:1.2rem;width:100%;max-width:480px;max-height:90vh;overflow-y:auto">
+      <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;color:var(--gold);margin-bottom:.8rem">☁️ Google Drive Setup</div>
+      <div style="font-size:.8rem;color:var(--paper2);line-height:1.7;margin-bottom:1rem">
+        To use Google Drive backup you need a free Google Cloud Client ID. This takes about 5 minutes to set up once.<br><br>
+        <strong style="color:var(--gold)">Steps:</strong><br>
+        1. Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--blue)">console.cloud.google.com</a><br>
+        2. Create a new project (name it anything)<br>
+        3. Go to <strong>APIs & Services → Credentials</strong><br>
+        4. Click <strong>Create Credentials → OAuth Client ID</strong><br>
+        5. Choose <strong>Web Application</strong><br>
+        6. Under Authorized JavaScript origins add: <code style="background:rgba(255,255,255,.1);padding:1px 5px">https://mattbowen153.github.io</code><br>
+        7. Copy your <strong>Client ID</strong> and paste below
+      </div>
+      <label class="fl">Google OAuth Client ID</label>
+      <input class="fi" id="gdriveClientInput" placeholder="xxxx.apps.googleusercontent.com" style="margin-bottom:.8rem">
+      <div style="display:flex;gap:.6rem">
+        <button class="btn btn-gold" style="flex:1" onclick="saveGdriveClient()">Save & Sign In</button>
+        <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('gdriveSetupModal').remove()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function saveGdriveClient(){
+  const val=document.getElementById('gdriveClientInput')?.value?.trim();
+  if(!val){ toast('Enter your Client ID first','error'); return; }
+  localStorage.setItem('cvp_gdrive_client', val);
+  document.getElementById('gdriveSetupModal')?.remove();
+  gdriveSignIn();
+}
+
+// Auto-save to Drive after every saveDB if connected
+const _origSaveDB = saveDB;
+function saveDB(){
+  _origSaveDB();
+  // Silently sync to Drive if connected (debounced 3s)
+  if(gdriveToken && DB.comics.length>0){
+    clearTimeout(window._gdriveSaveTimer);
+    window._gdriveSaveTimer = setTimeout(()=>gdriveSave(), 3000);
+  }
+}
 function fixCover(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   const existing=document.getElementById('fixCoverModal');
