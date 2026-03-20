@@ -2034,7 +2034,7 @@ async function autoFetchMissingCovers(){
 
   for(const c of missing){
     try{
-      const img = await fetchComicVineCover(c.title, c.issue);
+      const img = await fetchComicVineCover(c.title, c.issue, c.publisher);
       if(img){
         const idx = DB.comics.findIndex(x=>x.id===c.id);
         if(idx!==-1){
@@ -2193,7 +2193,7 @@ function openDetail(id){
 
   // Task 1: Fetch clean cover if we don't have one
   if(!cleanCover && c.title){
-    fetchComicVineCover(c.title, c.issue).then(img=>{
+    fetchComicVineCover(c.title, c.issue, c.publisher).then(img=>{
       if(img){
         cleanCover=img;
         const idx=DB.comics.findIndex(x=>x.id===id);
@@ -2591,6 +2591,61 @@ Respond ONLY with JSON:
       </div>`;
   }catch(e){
     resultDiv.innerHTML=`<div style="color:var(--accent2);font-size:.78rem">⚠ Could not load bundle suggestions.</div>`;
+  }
+}
+
+async function suggestScanBundle(title, newIssue, publisher){
+  const resultDiv = document.getElementById('scanBundleSuggestion');
+  if(!resultDiv) return;
+  resultDiv.innerHTML=`<div class="spin-wrap" style="padding:.6rem"><div class="spin"></div><div class="pulse-txt">Analyzing bundle value…</div></div>`;
+
+  // Get all owned issues of this series
+  const owned = DB.comics.filter(c=>c.title.toLowerCase()===title.toLowerCase());
+  const ownedList = owned.map(c=>`#${cleanIssue(c.issue)}${c.grade?' ('+c.grade+')':''}`).join(', ');
+  const allIssues = [...owned.map(c=>cleanIssue(c.issue)), newIssue].filter(Boolean);
+
+  if(!apiKeys.anthropic){
+    resultDiv.innerHTML=`<div style="font-size:.76rem;color:var(--dim)">Add Anthropic key in Settings to get AI bundle analysis.</div>`;
+    return;
+  }
+
+  try{
+    const res = await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:anthropicHeaders(),
+      body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:500,
+        messages:[{role:'user',content:`Comic bundle analysis for "${title}" (${publisher}).
+
+Issues in collection: ${ownedList}
+Just scanned: #${newIssue}
+All issues combined: ${allIssues.map(i=>'#'+i).join(', ')}
+
+Should these be sold as a bundle lot or individually? Give a quick, practical answer.
+
+Respond ONLY with JSON:
+{
+  "sell_as_lot": true,
+  "lot_value_estimate": "$25-40",
+  "individual_value_estimate": "$18-25 total",
+  "recommendation": "One sentence — bundle or sell separately and why",
+  "lot_title": "Suggested eBay lot title",
+  "best_platform": "eBay BIN"
+}`}]})});
+    const data = await res.json();
+    const txt = data.content?.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+    const d = JSON.parse(txt);
+    resultDiv.innerHTML=`
+      <div style="font-size:.78rem;color:var(--paper2);line-height:1.6;padding:.5rem .2rem">
+        <div style="color:${d.sell_as_lot?'var(--green)':'var(--blue)'};font-weight:700;margin-bottom:.3rem">
+          ${d.sell_as_lot?'📦 Bundle recommended':'🏷️ Sell individually'}
+        </div>
+        ${d.recommendation}
+        <div style="display:flex;gap:.5rem;margin-top:.4rem;flex-wrap:wrap">
+          <span style="font-size:.72rem;color:var(--dim)">As lot: <strong style="color:var(--gold)">${d.lot_value_estimate||'?'}</strong></span>
+          <span style="font-size:.72rem;color:var(--dim)">Individual: <strong style="color:var(--dim)">${d.individual_value_estimate||'?'}</strong></span>
+        </div>
+        ${d.lot_title?`<div style="font-size:.7rem;color:var(--blue);margin-top:.2rem">📝 "${d.lot_title}"</div>`:''}
+      </div>`;
+  }catch(e){
+    resultDiv.innerHTML='';
   }
 }
 
@@ -3802,6 +3857,25 @@ function showCoverScanResult(d, photoDataUrl, allComics){
     </div>
     ${d.confidence==='low'?`<div style="padding:.7rem .9rem;background:rgba(255,149,0,.07);border:1px solid rgba(255,149,0,.25);font-size:.78rem;color:var(--orange);margin-bottom:.8rem">⚠ Low confidence — please review all fields before saving and correct anything that looks wrong.</div>`:''}
     ${checkDuplicate(d.title,d.issue)?dupWarningHtml(checkDuplicate(d.title,d.issue)):''}
+
+    ${(()=>{
+      // Check if collector has other issues from same series
+      const sameSeries = DB.comics.filter(c=>c.title.toLowerCase()===(d.title||'').toLowerCase());
+      if(sameSeries.length >= 1){
+        const issues = sameSeries.map(c=>'#'+cleanIssue(c.issue)).join(', ');
+        const enc2 = JSON.stringify({title:d.title,issue:d.issue,publisher:d.publisher}).replace(/"/g,'&quot;');
+        return `<div style="padding:.7rem 1rem;background:rgba(255,214,10,.05);border:1px solid rgba(255,214,10,.25);border-radius:4px;margin-bottom:.8rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.82rem;color:var(--gold);margin-bottom:.3rem">📦 BUNDLE OPPORTUNITY</div>
+          <div style="font-size:.78rem;color:var(--paper2);margin-bottom:.5rem">You already own <strong>${sameSeries.length}</strong> other ${d.title} issue${sameSeries.length>1?'s':''} (${issues}) — these could sell better together as a lot!</div>
+          <button class="btn btn-gold btn-sm" style="width:100%" onclick="suggestScanBundle('${(d.title||'').replace(/'/g,"\\'")}','${cleanIssue(d.issue)}','${(d.publisher||'').replace(/'/g,"\\'")}')">
+            📦 See Bundle Options for These ${sameSeries.length+1} Comics
+          </button>
+          <div id="scanBundleSuggestion" style="margin-top:.6rem"></div>
+        </div>`;
+      }
+      return '';
+    })()}
+
     <div style="display:flex;gap:.7rem;flex-wrap:wrap">
       ${multiScanMode
         ? `<button class="btn btn-primary" style="flex:1" onclick="addToScanQueue(${enc})">⚡ Add to Queue</button>`
@@ -4106,7 +4180,7 @@ async function lookupViaAI(barcode){
     // Try to fetch cover art from Comic Vine using the identified title
     if(result && result.title && apiKeys.comicvine){
       try{
-        const imgData=await fetchComicVineCover(result.title, result.issue);
+        const imgData=await fetchComicVineCover(result.title, result.issue, result.publisher);
         if(imgData) result.image=imgData;
       }catch(e){}
     }
@@ -4115,41 +4189,59 @@ async function lookupViaAI(barcode){
 }
 
 // Fetch cover art from Comic Vine by title+issue search
-async function fetchComicVineCover(title, issue){
+async function fetchComicVineCover(title, issue, publisher){
   if(!title) return null;
   const issueClean = cleanIssue(issue);
 
-  // Try 1: Comic Vine direct UPC field won't work here, use title search
   if(apiKeys.comicvine){
     try{
-      // Search by volume name first (more accurate than issue search)
-      const q=encodeURIComponent(title);
-      const url=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(title+' '+issueClean)}&field_list=image,name,issue_number,volume&limit=10`;
+      // Include publisher in search query to avoid wrong series matches
+      const searchQuery = publisher
+        ? `${title} ${publisher} ${issueClean}`
+        : `${title} ${issueClean}`;
+      const url=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(searchQuery)}&field_list=image,name,issue_number,volume&limit=15`;
       const res=await fetch(url);
       if(res.ok){
         const data=await res.json();
         if(data.results?.length){
-          // Find best match — prefer exact issue number match
-          const match = issueClean&&issueClean!=='?'
-            ? data.results.find(r=>r.issue_number===issueClean||r.issue_number===String(parseInt(issueClean)))
-              || data.results.find(r=>r.volume?.name?.toLowerCase()===title.toLowerCase())
-              || data.results[0]
-            : data.results[0];
+          // Priority 1: exact issue number + publisher name match
+          let match = data.results.find(r=>
+            r.issue_number===issueClean &&
+            publisher &&
+            r.volume?.publisher?.name?.toLowerCase().includes(publisher.toLowerCase())
+          );
+          // Priority 2: exact issue number + volume title match
+          if(!match) match = data.results.find(r=>
+            r.issue_number===issueClean &&
+            r.volume?.name?.toLowerCase()===title.toLowerCase()
+          );
+          // Priority 3: exact issue number only
+          if(!match) match = data.results.find(r=>
+            r.issue_number===issueClean||r.issue_number===String(parseInt(issueClean))
+          );
+          // Priority 4: volume name match
+          if(!match) match = data.results.find(r=>
+            r.volume?.name?.toLowerCase()===title.toLowerCase()
+          );
+          // Last resort: first result
+          if(!match) match = data.results[0];
           if(match?.image?.medium_url) return match.image.medium_url;
         }
       }
     }catch(e){}
   }
 
-  // Try 2: Open Library cover (good for TPBs)
-  try{
-    const olRes=await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(title)}&fields=cover_i&limit=1`);
-    if(olRes.ok){
-      const olData=await olRes.json();
-      const coverId=olData.docs?.[0]?.cover_i;
-      if(coverId) return `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`;
-    }
-  }catch(e){}
+  // Open Library fallback (good for TPBs — skip for single issues)
+  if(issue==='?' || !issue){
+    try{
+      const olRes=await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(title)}&fields=cover_i&limit=1`);
+      if(olRes.ok){
+        const olData=await olRes.json();
+        const coverId=olData.docs?.[0]?.cover_i;
+        if(coverId) return `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`;
+      }
+    }catch(e){}
+  }
 
   return null;
 }
