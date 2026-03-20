@@ -1661,6 +1661,19 @@ body {
             🔄 <strong style="color:var(--green)">Auto-backup is on</strong> — your collection is automatically saved every time you add or edit a comic. If you switch URLs or clear your browser, use the restore button below.
           </div>
           <div style="display:flex;flex-direction:column;gap:1rem;max-width:500px">
+
+            <!-- Cover Art Management -->
+            <div style="background:var(--panel);border:1px solid rgba(72,149,239,.25);padding:1.2rem;border-radius:4px">
+              <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.3rem;color:var(--blue)">🖼️ Cover Art</div>
+              <p style="font-size:.8rem;color:var(--dim);margin-bottom:.5rem">
+                Covers are fetched <strong style="color:var(--paper2)">once per comic</strong> and then locked in so they don't change automatically.
+                If a cover is wrong, tap <strong style="color:var(--paper2)">🖼️ Fix Cover</strong> on any card or in the detail modal to search for the correct one.
+              </p>
+              <p style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">
+                Use <strong style="color:var(--paper2)">Refresh All Covers</strong> to re-fetch every comic at once — only run this when needed as it uses your Comic Vine API.
+              </p>
+              <button class="btn btn-ghost" id="refreshCoversBtn" style="width:100%" onclick="refreshAllCovers(this)">🖼️ Refresh All Covers (${DB.comics.length} comics)</button>
+            </div>
             <div style="background:var(--panel);border:1px solid rgba(255,214,10,.3);padding:1.2rem;border-radius:4px">
               <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.3rem;color:var(--gold)">📤 Export Collection</div>
               <p style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">Download a full backup — <strong style="color:var(--paper2)">do this before switching devices or URLs.</strong></p>
@@ -2124,6 +2137,7 @@ function renderCollection(){
         ${!selectMode?`<div class="card-hover">
           <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openEdit('${c.id}')">✏️ Edit</button>
           <button class="btn btn-gold btn-sm" onclick="event.stopPropagation();openSell('${c.id}')">🏷️ Sell</button>
+          <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();fixCover('${c.id}')">🖼️ Fix Cover</button>
           <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();deleteComic('${c.id}')">🗑️</button>
         </div>`:''}
       </div>
@@ -2145,13 +2159,18 @@ function renderCollection(){
 
 // Auto-fetch cover art for comics missing it — runs in background after collection renders
 let coverFetchInProgress = false;
+
+// Only auto-fetch covers for comics that have NEVER had a cover fetched
+// Comics with coverUrl already set (even wrong ones) are skipped — use Fix Cover to correct
 async function autoFetchMissingCovers(){
   if(coverFetchInProgress) return;
-  if(!apiKeys.comicvine && !apiKeys.anthropic) return;
+  if(!apiKeys.comicvine) return;
 
+  // Only fetch if comic has no cover at all AND hasn't been attempted before
   const missing = DB.comics.filter(c =>
     !c.coverUrl &&
-    !(c.image && !c.image.startsWith('data:')) // no URL-based image
+    !c.coverAttempted && // never tried before
+    !(c.image && !c.image.startsWith('data:'))
   );
   if(!missing.length) return;
 
@@ -2159,27 +2178,56 @@ async function autoFetchMissingCovers(){
   let updated = false;
 
   for(const c of missing){
+    // Mark as attempted immediately so we don't keep retrying
+    const idx = DB.comics.findIndex(x=>x.id===c.id);
+    if(idx!==-1) DB.comics[idx].coverAttempted = true;
+
     try{
       const img = await fetchComicVineCover(c.title, c.issue, c.publisher);
       if(img){
-        const idx = DB.comics.findIndex(x=>x.id===c.id);
-        if(idx!==-1){
-          DB.comics[idx].coverUrl = img;
-          updated = true;
-          // Update just this card's image live without full re-render
-          const card = document.querySelector(`.comic-card[onclick*="${c.id}"] .card-img`);
-          if(card){
-            card.innerHTML = `<img src="${img}" alt="${c.title}" style="width:100%;height:100%;object-fit:cover;object-position:center top">`;
-          }
+        DB.comics[idx].coverUrl = img;
+        updated = true;
+        const card = document.querySelector(`.comic-card[onclick*="${c.id}"] .card-img`);
+        if(card){
+          card.innerHTML = `<img src="${img}" alt="${c.title}" style="width:100%;height:100%;object-fit:cover;object-position:center top">`;
         }
       }
-      // Small delay between requests to avoid rate limiting
+      await new Promise(r=>setTimeout(r,400));
+    }catch(e){ continue; }
+  }
+
+  if(updated || missing.length) saveDB(); // save attempted flags even if no cover found
+  coverFetchInProgress = false;
+}
+
+// Manual refresh — only called from Settings, re-fetches all covers including wrong ones
+async function refreshAllCovers(btn){
+  if(coverFetchInProgress){ toast('Cover fetch already running','info'); return; }
+  if(!apiKeys.comicvine){ toast('Comic Vine API key needed in Settings','error'); return; }
+
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Refreshing…'; }
+  coverFetchInProgress = true;
+  let updated = 0;
+  let total = DB.comics.length;
+
+  for(let i=0; i<DB.comics.length; i++){
+    const c = DB.comics[i];
+    if(btn) btn.textContent=`⏳ ${i+1}/${total}…`;
+    try{
+      const img = await fetchComicVineCover(c.title, c.issue, c.publisher);
+      if(img){
+        DB.comics[i].coverUrl = img;
+        DB.comics[i].coverAttempted = true;
+        updated++;
+      }
       await new Promise(r=>setTimeout(r,300));
     }catch(e){ continue; }
   }
 
-  if(updated) saveDB();
+  saveDB(); renderCollection();
   coverFetchInProgress = false;
+  if(btn){ btn.disabled=false; btn.textContent='🖼️ Refresh All Covers'; }
+  toast(`✅ Updated ${updated} of ${total} covers`);
 }
 
 function updateStats(){
@@ -2307,6 +2355,7 @@ function openDetail(id){
         <button class="btn btn-primary" style="flex:1" onclick="closeModal('detailModal');openEdit('${id}')">✏️ Edit</button>
         <button class="btn btn-gold" style="flex:1" onclick="closeModal('detailModal');openSell('${id}')">🏷️ List for Sale</button>
         <button class="btn btn-ghost" style="flex:1" onclick="closeModal('detailModal');openEdit('${id}');setTimeout(()=>runGrade(),300)">🤖 AI Grade</button>
+        <button class="btn btn-ghost" style="flex:1;color:var(--blue);border-color:rgba(72,149,239,.3)" onclick="closeModal('detailModal');fixCover('${id}')">🖼️ Fix Cover</button>
         <button class="btn btn-ghost" style="flex:1;color:var(--blue);border-color:rgba(72,149,239,.3)" onclick="closeModal('detailModal');addComicToBundle('${id}')">📦 Add to Bundle</button>
         ${cover?`<button class="btn btn-ghost" style="flex:1" onclick="saveCleanCover('${id}','${cover.replace(/'/g,"\\'")}')">💾 Save Cover</button>`:''}
         <button class="btn btn-ghost" style="flex:1;color:var(--accent2);border-color:rgba(230,57,70,.3)" onclick="closeModal('detailModal');deleteComic('${id}')">🗑️ Delete</button>
@@ -2425,6 +2474,136 @@ Provide series and variant information. Respond JSON only:
 }
 
 // Save clean cover URL to comic record
+// ── FIX COVER MODAL ──────────────────────────────────────
+function fixCover(id){
+  const c=DB.comics.find(x=>x.id===id); if(!c) return;
+  const existing=document.getElementById('fixCoverModal');
+  if(existing) existing.remove();
+
+  const modal=document.createElement('div');
+  modal.id='fixCoverModal';
+  modal.className='modal-bg';
+  modal.style.cssText='display:flex';
+  modal.innerHTML=`
+    <div class="modal" style="max-width:420px">
+      <div class="modal-hdr">
+        <div class="modal-title">🖼️ Fix Cover Art</div>
+        <button class="modal-x" onclick="document.getElementById('fixCoverModal').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">
+          Searching cover art for <strong style="color:var(--paper)">${c.title} #${cleanIssue(c.issue)}</strong>
+          ${c.publisher?` <span style="color:var(--dim)">(${c.publisher})</span>`:''}
+        </div>
+
+        <!-- Current cover -->
+        ${c.coverUrl||c.image?`
+        <div style="margin-bottom:.8rem">
+          <div style="font-size:.7rem;letter-spacing:1.5px;color:var(--dim);font-family:'Barlow Condensed';margin-bottom:.3rem">CURRENT COVER</div>
+          <div style="display:flex;align-items:center;gap:.8rem">
+            <img src="${c.coverUrl||c.image}" style="width:50px;height:75px;object-fit:cover;border:1px solid var(--border)">
+            <div>
+              <div style="font-size:.76rem;color:var(--paper2)">This is what shows on your cards</div>
+              <button class="btn btn-ghost btn-sm" style="margin-top:.3rem;font-size:.72rem" onclick="clearCover('${id}')">✕ Remove this cover</button>
+            </div>
+          </div>
+        </div>`:''}
+
+        <!-- Search -->
+        <div style="margin-bottom:.6rem">
+          <label class="fl">Search for correct cover</label>
+          <div style="display:flex;gap:.5rem">
+            <input class="fi" id="coverSearchInput" placeholder="${c.title} ${cleanIssue(c.issue)} ${c.publisher||''}" style="flex:1">
+            <button class="btn btn-primary" onclick="searchCoversForFix('${id}')">Search</button>
+          </div>
+        </div>
+
+        <!-- Upload your own -->
+        <div style="margin-bottom:.8rem;padding:.6rem .8rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px">
+          <div style="font-size:.76rem;color:var(--paper2);margin-bottom:.4rem">📷 Or upload your own cover photo</div>
+          <input type="file" id="coverUploadInput" accept="image/*" style="display:none" onchange="uploadCoverForFix('${id}',this)">
+          <button class="btn btn-ghost btn-sm" style="width:100%" onclick="document.getElementById('coverUploadInput').click()">⬆ Upload Photo from Camera Roll</button>
+        </div>
+
+        <!-- Results -->
+        <div id="coverSearchResults" style="max-height:300px;overflow-y:auto"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  // Auto-search immediately with title+publisher
+  const q=`${c.title} ${cleanIssue(c.issue)} ${c.publisher||''}`.trim();
+  document.getElementById('coverSearchInput').value=q;
+  searchCoversForFix(id);
+}
+
+async function searchCoversForFix(id){
+  const c=DB.comics.find(x=>x.id===id); if(!c) return;
+  const q=document.getElementById('coverSearchInput')?.value||`${c.title} ${cleanIssue(c.issue)}`;
+  const resultsDiv=document.getElementById('coverSearchResults'); if(!resultsDiv) return;
+  resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Searching covers…</div></div>`;
+
+  if(!apiKeys.comicvine){
+    resultsDiv.innerHTML=`<div style="font-size:.78rem;color:var(--dim);padding:.5rem">Add a Comic Vine API key in Settings for cover search.<br><br>You can still upload your own photo above.</div>`;
+    return;
+  }
+
+  try{
+    const url=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume&limit=12`;
+    const res=await fetch(url);
+    const data=await res.json();
+    if(!data.results?.length){
+      resultsDiv.innerHTML=`<div style="font-size:.78rem;color:var(--dim);padding:.5rem">No results found. Try a different search term or upload your own photo.</div>`;
+      return;
+    }
+    resultsDiv.innerHTML=`
+      <div style="font-size:.72rem;color:var(--dim);margin-bottom:.5rem">${data.results.length} results — tap the correct cover to use it</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem">
+        ${data.results.filter(r=>r.image?.medium_url).map(r=>`
+          <div style="cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden" onclick="applyCoverFix('${id}','${r.image.medium_url.replace(/'/g,"\\'")}')">
+            <img src="${r.image.medium_url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;display:block">
+            <div style="padding:.2rem .3rem;background:rgba(0,0,0,.5);font-size:.6rem;color:var(--paper2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+              ${r.volume?.name||r.name||'?'} #${r.issue_number||'?'}
+            </div>
+          </div>`).join('')}
+      </div>`;
+  }catch(e){
+    resultsDiv.innerHTML=`<div style="font-size:.78rem;color:var(--accent2);padding:.5rem">Search failed. Try uploading your own photo.</div>`;
+  }
+}
+
+function applyCoverFix(id, url){
+  const idx=DB.comics.findIndex(x=>x.id===id); if(idx===-1) return;
+  DB.comics[idx].coverUrl=url;
+  saveDB(); renderCollection();
+  document.getElementById('fixCoverModal')?.remove();
+  toast('✅ Cover updated!');
+}
+
+function clearCover(id){
+  const idx=DB.comics.findIndex(x=>x.id===id); if(idx===-1) return;
+  DB.comics[idx].coverUrl='';
+  DB.comics[idx].image='';
+  saveDB(); renderCollection();
+  document.getElementById('fixCoverModal')?.remove();
+  toast('Cover removed — will re-fetch automatically');
+}
+
+function uploadCoverForFix(id, input){
+  const file=input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const idx=DB.comics.findIndex(x=>x.id===id); if(idx===-1) return;
+    // Store as data URL for user photos
+    DB.comics[idx].image=e.target.result;
+    DB.comics[idx].coverUrl=''; // clear any wrong Comic Vine URL
+    saveDB(); renderCollection();
+    document.getElementById('fixCoverModal')?.remove();
+    toast('✅ Cover photo saved!');
+  };
+  reader.readAsDataURL(file);
+}
+
 function saveCleanCover(id, url){
   const idx=DB.comics.findIndex(x=>x.id===id);
   if(idx!==-1){ DB.comics[idx].coverUrl=url; saveDB(); renderCollection(); }
