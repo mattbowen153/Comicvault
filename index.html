@@ -2994,45 +2994,82 @@ async function searchCoversForFix(id){
   const resultsDiv=document.getElementById('coverSearchResults'); if(!resultsDiv) return;
   resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Searching covers…</div></div>`;
 
-  if(!apiKeys.comicvine){
+  let allResults=[];
+
+  // Source 1: Comic Vine via CORS proxy
+  if(apiKeys.comicvine){
+    try{
+      const cvUrl=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume&limit=12`;
+      const proxyUrl=`https://api.allorigins.win/get?url=${encodeURIComponent(cvUrl)}`;
+      const res=await fetch(proxyUrl);
+      if(res.ok){
+        const raw=await res.json();
+        const data=JSON.parse(raw.contents||'{}');
+        (data.results||[]).filter(r=>r.image?.medium_url).forEach(r=>{
+          allResults.push({
+            url:r.image.medium_url,
+            label:`${r.volume?.name||r.name||'?'} #${r.issue_number||'?'}`,
+            source:'Comic Vine'
+          });
+        });
+      }
+    }catch(e){ console.warn('[Fix Cover] Comic Vine failed:',e.message); }
+  }
+
+  // Source 2: Google Books
+  try{
+    const gbRes=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q+' comic')}&maxResults=6`);
+    if(gbRes.ok){
+      const gbData=await gbRes.json();
+      (gbData.items||[]).filter(b=>b.volumeInfo?.imageLinks?.thumbnail).forEach(b=>{
+        const img=b.volumeInfo.imageLinks.thumbnail.replace('zoom=1','zoom=3').replace('http:','https:');
+        allResults.push({
+          url:img,
+          label:b.volumeInfo.title||'?',
+          source:'Google Books'
+        });
+      });
+    }
+  }catch(e){}
+
+  // Source 3: Open Library
+  try{
+    const olRes=await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(q)}&fields=cover_i,title&limit=6`);
+    if(olRes.ok){
+      const olData=await olRes.json();
+      (olData.docs||[]).filter(d=>d.cover_i).forEach(d=>{
+        allResults.push({
+          url:`https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg`,
+          label:d.title||'?',
+          source:'Open Library'
+        });
+      });
+    }
+  }catch(e){}
+
+  if(!allResults.length){
     resultsDiv.innerHTML=`
       <div style="font-size:.78rem;color:var(--dim);padding:.5rem;line-height:1.7">
-        No Comic Vine key — upload your own photo above, or add a Comic Vine key in Settings.<br><br>
-        <a href="https://comicvine.gamespot.com/api/" target="_blank" style="color:var(--blue)">Get a free Comic Vine API key →</a>
+        No results found for "${q}".<br>
+        Try a shorter search like just the title, or upload your own photo above.
+        ${!apiKeys.comicvine?'<br><br><a href="https://comicvine.gamespot.com/api/" target="_blank" style="color:var(--blue)">Get a free Comic Vine key →</a>':''}
       </div>`;
     return;
   }
 
-  try{
-    const url=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume&limit=12`;
-    const res=await fetch(url);
-    if(!res.ok) throw new Error('API returned '+res.status);
-    const data=await res.json();
-    const results=data.results?.filter(r=>r.image?.medium_url)||[];
-    if(!results.length){
-      resultsDiv.innerHTML=`<div style="font-size:.78rem;color:var(--dim);padding:.5rem">No results for "${q}". Try searching just the title e.g. "Fantastic Four".</div>`;
-      return;
-    }
-    resultsDiv.innerHTML=`
-      <div style="font-size:.72rem;color:var(--dim);margin-bottom:.5rem">${results.length} results — tap the correct cover</div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem">
-        ${results.map(r=>{
-          const safeUrl=r.image.medium_url.replace(/'/g,"\\'").replace(/"/g,'&quot;');
-          return `<div style="cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden;active:border-color:var(--gold)" onclick="applyCoverFix('${id}','${safeUrl}')">
-            <img src="${r.image.medium_url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;display:block" onerror="this.parentElement.style.display='none'">
-            <div style="padding:.2rem .3rem;background:rgba(0,0,0,.7);font-size:.6rem;color:var(--paper2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-              ${r.volume?.name||r.name||'?'} #${r.issue_number||'?'}
-            </div>
-          </div>`;
-        }).join('')}
-      </div>`;
-  }catch(e){
-    resultsDiv.innerHTML=`
-      <div style="font-size:.78rem;color:var(--accent2);padding:.5rem;line-height:1.6">
-        Search failed: ${e.message}<br><br>
-        Try uploading your own photo above instead.
-      </div>`;
-  }
+  resultsDiv.innerHTML=`
+    <div style="font-size:.72rem;color:var(--dim);margin-bottom:.5rem">${allResults.length} results from ${[...new Set(allResults.map(r=>r.source))].join(', ')} — tap to use</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem">
+      ${allResults.map(r=>{
+        const safeUrl=r.url.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+        return `<div style="cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden" onclick="applyCoverFix('${id}','${safeUrl}')">
+          <img src="${r.url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;display:block" onerror="this.parentElement.style.display='none'">
+          <div style="padding:.2rem .3rem;background:rgba(0,0,0,.7);font-size:.55rem;color:var(--paper2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            ${r.label} <span style="color:var(--dim)">(${r.source})</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 
 function applyCoverFix(id, url){
@@ -5611,55 +5648,73 @@ async function fetchComicVineCover(title, issue, publisher){
   if(!title) return null;
   const issueClean = cleanIssue(issue);
 
+  // Try sources in order — first one that returns an image wins
+
+  // Source 1: Comic Vine via CORS proxy
   if(apiKeys.comicvine){
     try{
-      // Include publisher in search query to avoid wrong series matches
       const searchQuery = publisher
         ? `${title} ${publisher} ${issueClean}`
         : `${title} ${issueClean}`;
-      const url=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(searchQuery)}&field_list=image,name,issue_number,volume&limit=15`;
-      const res=await fetch(url);
+      // Use allorigins as CORS proxy
+      const cvUrl=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(searchQuery)}&field_list=image,name,issue_number,volume&limit=15`;
+      const proxyUrl=`https://api.allorigins.win/get?url=${encodeURIComponent(cvUrl)}`;
+      const res=await fetch(proxyUrl);
       if(res.ok){
-        const data=await res.json();
+        const raw=await res.json();
+        const data=JSON.parse(raw.contents||'{}');
         if(data.results?.length){
-          // Priority 1: exact issue number + publisher name match
-          let match = data.results.find(r=>
-            r.issue_number===issueClean &&
-            publisher &&
-            r.volume?.publisher?.name?.toLowerCase().includes(publisher.toLowerCase())
-          );
-          // Priority 2: exact issue number + volume title match
-          if(!match) match = data.results.find(r=>
-            r.issue_number===issueClean &&
-            r.volume?.name?.toLowerCase()===title.toLowerCase()
-          );
-          // Priority 3: exact issue number only
-          if(!match) match = data.results.find(r=>
-            r.issue_number===issueClean||r.issue_number===String(parseInt(issueClean))
-          );
-          // Priority 4: volume name match
-          if(!match) match = data.results.find(r=>
-            r.volume?.name?.toLowerCase()===title.toLowerCase()
-          );
-          // Last resort: first result
-          if(!match) match = data.results[0];
+          let match=data.results.find(r=>r.issue_number===issueClean&&publisher&&r.volume?.publisher?.name?.toLowerCase().includes(publisher.toLowerCase()));
+          if(!match) match=data.results.find(r=>r.issue_number===issueClean&&r.volume?.name?.toLowerCase()===title.toLowerCase());
+          if(!match) match=data.results.find(r=>r.issue_number===issueClean||r.issue_number===String(parseInt(issueClean)));
+          if(!match) match=data.results.find(r=>r.volume?.name?.toLowerCase()===title.toLowerCase());
+          if(!match) match=data.results[0];
           if(match?.image?.medium_url) return match.image.medium_url;
+        }
+      }
+    }catch(e){ console.warn('[Cover] Comic Vine failed:',e.message); }
+  }
+
+  // Source 2: Marvel API (free, no CORS issues — great for Marvel comics)
+  if(publisher?.toLowerCase().includes('marvel') || (!publisher && title)){
+    try{
+      const marvelRes=await fetch(`https://gateway.marvel.com/v1/public/comics?titleStartsWith=${encodeURIComponent(title)}&issueNumber=${issueClean||0}&apikey=demo&limit=5`);
+      if(marvelRes.ok){
+        const marvelData=await marvelRes.json();
+        const comic=marvelData.data?.results?.[0];
+        if(comic?.thumbnail?.path){
+          const img=`${comic.thumbnail.path}/portrait_uncanny.${comic.thumbnail.extension}`;
+          if(!img.includes('image_not_available')) return img;
         }
       }
     }catch(e){}
   }
 
-  // Open Library fallback (good for TPBs — skip for single issues)
-  if(issue==='?' || !issue){
+  // Source 3: Open Library (good for TPBs/collected editions)
+  if(!issueClean || issueClean==='?'){
     try{
-      const olRes=await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(title)}&fields=cover_i&limit=1`);
+      const olRes=await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(title+' comics')}&fields=cover_i&limit=3`);
       if(olRes.ok){
         const olData=await olRes.json();
-        const coverId=olData.docs?.[0]?.cover_i;
+        const coverId=olData.docs?.find(d=>d.cover_i)?.cover_i;
         if(coverId) return `https://covers.openlibrary.org/b/id/${coverId}-M.jpg`;
       }
     }catch(e){}
   }
+
+  // Source 4: Google Books (surprisingly good for collected editions and graphic novels)
+  try{
+    const gbRes=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(title+' comic')}&maxResults=3`);
+    if(gbRes.ok){
+      const gbData=await gbRes.json();
+      const book=gbData.items?.find(b=>b.volumeInfo?.imageLinks?.thumbnail);
+      if(book){
+        // Upgrade to higher res
+        const img=book.volumeInfo.imageLinks.thumbnail.replace('zoom=1','zoom=3').replace('http:','https:');
+        return img;
+      }
+    }
+  }catch(e){}
 
   return null;
 }
