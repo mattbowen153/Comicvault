@@ -1675,6 +1675,7 @@ body {
                 <button class="btn btn-gold" style="flex:1;display:none" id="gdriveSaveBtn" onclick="gdriveSave()">☁️ Save to Drive</button>
                 <button class="btn btn-ghost" style="flex:1;display:none" id="gdriveLoadBtn" onclick="gdriveLoad()">⬇ Load from Drive</button>
               </div>
+              <button class="btn btn-ghost" id="driveCleanupBtn" style="width:100%;margin-top:.5rem;display:none;color:var(--accent2);border-color:rgba(230,57,70,.3)" onclick="gdriveCleanupSoldPhotos()">🗑️ Clean Up Sold Comic Photos from Drive</button>
             </div>
 
             <!-- Cover Art Management -->
@@ -1978,7 +1979,9 @@ let DB = {
 let gdriveToken = null;
 let gdriveTokenExpiry = 0;
 let gdriveFileId = null;
-const GDRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
+const GDRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/drive.file';
+const GDRIVE_PHOTO_FOLDER_NAME = 'ComicVault Photos';
+let gdrivePhotoFolderId = null;
 const GDRIVE_FILE_NAME = 'comicvault-data.json';
 
 // ── BULLETPROOF DATA PERSISTENCE ──────────────────────────
@@ -2033,30 +2036,45 @@ function loadDB(){
 }
 
 function saveDB(){
-  // CORE SAVE — always runs, completely independent of Google Drive
+  // CORE SAVE — strip large base64 images before saving to localStorage
+  // Photos are kept in memory (DB.comics) but not persisted to localStorage
+  // to avoid the 5MB quota limit. Cover URLs (http links) are kept.
   try{
-    const data=JSON.stringify(DB);
+    const slimComics = DB.comics.map(c=>({
+      ...c,
+      // Keep URL-based covers, strip base64 photos (they're huge)
+      image: c.image && !c.image.startsWith('data:') ? c.image : '',
+      // coverUrl is always a URL so keep it
+    }));
+    const slimDB = {...DB, comics: slimComics};
+    const data = JSON.stringify(slimDB);
     localStorage.setItem('cvp2', data);
-    localStorage.setItem('cvp2_backup', JSON.stringify({...DB, savedAt:new Date().toISOString()}));
+    localStorage.setItem('cvp2_backup', JSON.stringify({...slimDB, savedAt:new Date().toISOString()}));
     // Daily snapshot
     const today=new Date().toISOString().slice(0,10);
     try{
       const snap=localStorage.getItem('cvp2_snap');
       const snapDate=snap?JSON.parse(snap).snapDate:'';
-      if(snapDate!==today) localStorage.setItem('cvp2_snap', JSON.stringify({...DB, snapDate:today}));
+      if(snapDate!==today) localStorage.setItem('cvp2_snap', JSON.stringify({...slimDB, snapDate:today}));
     }catch(e){}
-    console.log('[ComicVault] Saved',DB.comics.length,'comics to localStorage');
+    console.log('[ComicVault] Saved',DB.comics.length,'comics to localStorage ('+(Math.round(data.length/1024))+'KB)');
   }catch(e){
     console.error('[ComicVault] Save failed:',e);
-    alert('Save failed: '+e.message);
+    // If still quota exceeded, try saving without backup slots
+    try{
+      const minimalComics=DB.comics.map(c=>({...c,image:''}));
+      localStorage.setItem('cvp2', JSON.stringify({...DB, comics:minimalComics}));
+      toast('⚠ Storage almost full — photos stripped to save space','error',4000);
+    }catch(e2){
+      toast('❌ Storage full — go to Settings → Data → Export to free space','error',5000);
+    }
   }
 
-  // GOOGLE DRIVE SYNC — completely separate, non-blocking, won't affect core save
-  // Only runs if signed in, debounced 5s so it doesn't interfere with UI
+  // GOOGLE DRIVE SYNC — completely separate, non-blocking
   if(typeof gdriveToken !== 'undefined' && gdriveToken && DB.comics.length>0){
     clearTimeout(window._gdriveSaveTimer);
     window._gdriveSaveTimer = setTimeout(()=>{
-      try{ gdriveSave(); }catch(e){ console.warn('[Drive] Auto-sync failed silently:',e); }
+      try{ gdriveSave(); }catch(e){ console.warn('[Drive] Auto-sync failed:',e); }
     }, 5000);
   }
 }
@@ -2115,6 +2133,30 @@ function restoreAutoBackup(){
 }
 
 loadDB();
+
+// One-time cleanup: strip base64 images from localStorage to free space
+// This runs once on load to fix the quota exceeded error
+(function cleanupStorage(){
+  try{
+    const s=localStorage.getItem('cvp2');
+    if(!s) return;
+    const d=JSON.parse(s);
+    if(!d.comics) return;
+    let hadPhotos=false;
+    d.comics=d.comics.map(c=>{
+      if(c.image&&c.image.startsWith('data:')){
+        hadPhotos=true;
+        return {...c,image:''};
+      }
+      return c;
+    });
+    if(hadPhotos){
+      localStorage.setItem('cvp2',JSON.stringify(d));
+      console.log('[ComicVault] Cleaned base64 photos from localStorage to free space');
+    }
+  }catch(e){}
+})();
+
 setTimeout(checkForRecovery, 600);
 
 // Toast notification system — replaces jarring alert() for success messages
@@ -2228,7 +2270,7 @@ function renderCollection(){
     const recTxt=c.rec==='hold'?'📌 Hold':c.rec==='sell'?'🏷️ Sell':'';
     return `<div class="comic-card${isSel?' sel':''}" onclick="cardClick('${c.id}')" style="${isSel?'outline:2px solid var(--gold)':''}">
       <div class="card-img">
-        ${(c.coverUrl||(c.image&&!c.image.startsWith('data:')))?`<img src="${c.coverUrl||c.image}" alt="${c.title}">`:`<div class="card-ph"><span style="font-size:.65rem;font-family:'Barlow Condensed';font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--dim);text-align:center;padding:.5rem">${c.publisher||'?'}</span></div>`}
+        ${(c.coverUrl||c.drivePhotoUrl||(c.image&&!c.image.startsWith('data:')))?`<img src="${c.coverUrl||c.drivePhotoUrl||c.image}" alt="${c.title}">`:`<div class="card-ph"><span style="font-size:.65rem;font-family:'Barlow Condensed';font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--dim);text-align:center;padding:.5rem">${c.publisher||'?'}</span></div>`}
         ${c.grade?`<div class="grade-pip ${gc(c.grade)}">${c.grade}</div>`:''}
         ${isListed?'<div class="sale-ribbon">For Sale</div>':c.rec==='hold'?'<div class="hold-ribbon">Hold</div>':''}
         ${!selectMode?`<div class="card-hover">
@@ -2571,6 +2613,115 @@ Provide series and variant information. Respond JSON only:
 }
 
 // Save clean cover URL to comic record
+// ── GOOGLE DRIVE PHOTO STORAGE ─────────────────────────────
+// Photos are uploaded to a "ComicVault Photos" folder in Google Drive
+// Each comic stores a drivePhotoUrl instead of base64 in localStorage
+// When a comic is sold, its photo is deleted from Drive automatically
+
+async function gdriveEnsurePhotoFolder(){
+  if(gdrivePhotoFolderId) return gdrivePhotoFolderId;
+  if(!gdriveToken) return null;
+  try{
+    // Search for existing folder
+    const res=await fetch(
+      `https://www.googleapis.com/drive/v3/files?q=name='${GDRIVE_PHOTO_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false&fields=files(id,name)`,
+      {headers:{Authorization:'Bearer '+gdriveToken}}
+    );
+    const data=await res.json();
+    if(data.files?.length){
+      gdrivePhotoFolderId=data.files[0].id;
+      return gdrivePhotoFolderId;
+    }
+    // Create folder if it doesn't exist
+    const createRes=await fetch('https://www.googleapis.com/drive/v3/files',{
+      method:'POST',
+      headers:{Authorization:'Bearer '+gdriveToken,'Content-Type':'application/json'},
+      body:JSON.stringify({name:GDRIVE_PHOTO_FOLDER_NAME,mimeType:'application/vnd.google-apps.folder'})
+    });
+    const folder=await createRes.json();
+    gdrivePhotoFolderId=folder.id;
+    console.log('[Drive] Created ComicVault Photos folder:',folder.id);
+    return gdrivePhotoFolderId;
+  }catch(e){ console.warn('[Drive] Folder error:',e); return null; }
+}
+
+async function gdriveUploadPhoto(comicId, title, issue, base64DataUrl){
+  if(!gdriveToken){ return null; }
+  try{
+    const folderId=await gdriveEnsurePhotoFolder();
+    if(!folderId) return null;
+
+    // Convert base64 to blob
+    const mtype=base64DataUrl.split(';')[0].split(':')[1];
+    const b64=base64DataUrl.split(',')[1];
+    const byteStr=atob(b64);
+    const arr=new Uint8Array(byteStr.length);
+    for(let i=0;i<byteStr.length;i++) arr[i]=byteStr.charCodeAt(i);
+    const blob=new Blob([arr],{type:mtype});
+
+    const ext=mtype.includes('png')?'png':'jpg';
+    const fileName=`${title}-${issue}-${comicId}.${ext}`.replace(/[^a-z0-9\-\.]/gi,'_');
+
+    // Multipart upload
+    const meta={name:fileName,parents:[folderId]};
+    const form=new FormData();
+    form.append('metadata',new Blob([JSON.stringify(meta)],{type:'application/json'}));
+    form.append('file',blob);
+
+    const res=await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webContentLink,webViewLink',{
+      method:'POST',
+      headers:{Authorization:'Bearer '+gdriveToken},
+      body:form
+    });
+    const file=await res.json();
+
+    // Make file publicly readable so it can be used as img src
+    await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/permissions`,{
+      method:'POST',
+      headers:{Authorization:'Bearer '+gdriveToken,'Content-Type':'application/json'},
+      body:JSON.stringify({role:'reader',type:'anyone'})
+    });
+
+    // Return a direct image URL
+    const directUrl=`https://drive.google.com/thumbnail?id=${file.id}&sz=w400`;
+    console.log('[Drive] Uploaded photo for',title,'#'+issue,'→',directUrl);
+    return {url:directUrl,fileId:file.id};
+  }catch(e){
+    console.warn('[Drive] Photo upload failed:',e);
+    return null;
+  }
+}
+
+async function gdriveDeletePhoto(driveFileId){
+  if(!gdriveToken||!driveFileId) return;
+  try{
+    await fetch(`https://www.googleapis.com/drive/v3/files/${driveFileId}`,{
+      method:'DELETE',
+      headers:{Authorization:'Bearer '+gdriveToken}
+    });
+    console.log('[Drive] Deleted photo file:',driveFileId);
+  }catch(e){ console.warn('[Drive] Delete failed:',e); }
+}
+
+async function gdriveCleanupSoldPhotos(){
+  // Delete Drive photos for all sold comics
+  if(!gdriveToken){ toast('Sign in to Google Drive first','error'); return; }
+  const soldWithPhotos=DB.sold.filter(s=>s.driveFileId);
+  if(!soldWithPhotos.length){ toast('No sold comic photos to clean up','info'); return; }
+
+  toast(`🗑️ Cleaning up ${soldWithPhotos.length} sold comic photos…`,'info',3000);
+  let deleted=0;
+  for(const s of soldWithPhotos){
+    await gdriveDeletePhoto(s.driveFileId);
+    // Remove fileId from sold record so we don't try again
+    const idx=DB.sold.findIndex(x=>x.id===s.id);
+    if(idx!==-1){ DB.sold[idx].driveFileId=null; DB.sold[idx].drivePhotoUrl=null; }
+    deleted++;
+  }
+  saveDB();
+  toast(`✅ Deleted ${deleted} photos from Google Drive`,'success',3000);
+}
+
 // ── GOOGLE DRIVE SYNC ──────────────────────────────────────
 const GDRIVE_CLIENT_ID = ''; // User sets this in Settings
 
@@ -2600,10 +2751,12 @@ function gdriveSignIn(){
         if(resp.error){ updateGdriveStatus('error','Sign in failed: '+resp.error); return; }
         gdriveToken = resp.access_token;
         gdriveTokenExpiry = Date.now()+(parseInt(resp.expires_in||3600)-60)*1000;
-        updateGdriveStatus('connected','✅ Connected to Google Drive');
+        updateGdriveStatus('connected','✅ Connected — photos auto-upload to Drive');
         document.getElementById('gdriveSignInBtn').style.display='none';
         document.getElementById('gdriveSaveBtn').style.display='block';
         document.getElementById('gdriveLoadBtn').style.display='block';
+        const cleanBtn=document.getElementById('driveCleanupBtn');
+        if(cleanBtn) cleanBtn.style.display='block';
         // Auto-save on connect
         gdriveSave();
       }
@@ -2732,19 +2885,31 @@ function showGdriveSetup(){
   modal.innerHTML=`
     <div style="background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:1.2rem;width:100%;max-width:480px;max-height:90vh;overflow-y:auto">
       <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;color:var(--gold);margin-bottom:.8rem">☁️ Google Drive Setup</div>
-      <div style="font-size:.8rem;color:var(--paper2);line-height:1.7;margin-bottom:1rem">
-        To use Google Drive backup you need a free Google Cloud Client ID. This takes about 5 minutes to set up once.<br><br>
-        <strong style="color:var(--gold)">Steps:</strong><br>
+
+      <div style="padding:.6rem .8rem;background:rgba(72,149,239,.08);border:1px solid rgba(72,149,239,.2);border-radius:4px;font-size:.76rem;color:var(--paper2);margin-bottom:.8rem;line-height:1.6">
+        <strong style="color:var(--blue)">What permissions this requests:</strong><br>
+        • <strong>drive.file</strong> — store your comic photos in a "ComicVault Photos" folder<br>
+        • <strong>drive.appdata</strong> — save your collection data privately<br>
+        Your Google Drive data outside ComicVault is never accessed.
+      </div>
+
+      <div style="font-size:.8rem;color:var(--paper2);line-height:1.8;margin-bottom:1rem">
+        <strong style="color:var(--gold)">One-time setup (5 min):</strong><br>
         1. Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--blue)">console.cloud.google.com</a><br>
-        2. Create a new project (name it anything)<br>
-        3. Go to <strong>APIs & Services → Credentials</strong><br>
-        4. Click <strong>Create Credentials → OAuth Client ID</strong><br>
-        5. Choose <strong>Web Application</strong><br>
-        6. Under Authorized JavaScript origins add: <code style="background:rgba(255,255,255,.1);padding:1px 5px">https://mattbowen153.github.io</code><br>
-        7. Copy your <strong>Client ID</strong> and paste below
+        2. Create or select a project<br>
+        3. Go to <strong>APIs & Services → Library</strong> → search <strong>"Google Drive API"</strong> → Enable it<br>
+        4. Go to <strong>APIs & Services → OAuth consent screen</strong> → set up if not done<br>
+        5. Go to <strong>Credentials → Create Credentials → OAuth Client ID</strong><br>
+        6. Choose <strong>Web Application</strong><br>
+        7. Under <strong>Authorized JavaScript origins</strong> add:<br>
+        &nbsp;&nbsp;<code style="background:rgba(255,255,255,.1);padding:1px 6px;border-radius:3px">https://mattbowen153.github.io</code><br>
+        8. Click Create → copy the <strong>Client ID</strong> and paste below
       </div>
       <label class="fl">Google OAuth Client ID</label>
-      <input class="fi" id="gdriveClientInput" placeholder="xxxx.apps.googleusercontent.com" style="margin-bottom:.8rem">
+      <input class="fi" id="gdriveClientInput" placeholder="123456789-xxxx.apps.googleusercontent.com" style="margin-bottom:.8rem">
+      <div style="font-size:.72rem;color:var(--dim);margin-bottom:.8rem">
+        When you sign in, Google will show a permission screen listing exactly what ComicVault can access. You can revoke access any time at <a href="https://myaccount.google.com/permissions" target="_blank" style="color:var(--blue)">myaccount.google.com/permissions</a>
+      </div>
       <div style="display:flex;gap:.6rem">
         <button class="btn btn-gold" style="flex:1" onclick="saveGdriveClient()">Save & Sign In</button>
         <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('gdriveSetupModal').remove()">Cancel</button>
@@ -3000,6 +3165,8 @@ function gdriveAutoSignIn(){
         document.getElementById('gdriveSignInBtn').style.display='none';
         document.getElementById('gdriveSaveBtn').style.display='block';
         document.getElementById('gdriveLoadBtn').style.display='block';
+        const cleanBtn=document.getElementById('driveCleanupBtn');
+        if(cleanBtn) cleanBtn.style.display='block';
       }
     });
     client.requestAccessToken();
@@ -3447,7 +3614,7 @@ function renderBundlePicker(){
   div.innerHTML=comics.map(c=>{
     const inBundle=currentBundle.comicIds.includes(c.id);
     return `<div style="display:flex;align-items:center;gap:.7rem;padding:.45rem .6rem;background:${inBundle?'rgba(255,214,10,.08)':'rgba(255,255,255,.03)'};border:1px solid ${inBundle?'rgba(255,214,10,.3)':'var(--border)'};border-radius:3px;cursor:pointer;margin-bottom:.25rem" onclick="toggleBundleComic('${c.id}')">
-      ${c.coverUrl||c.image?`<img src="${c.coverUrl||c.image}" style="width:28px;height:42px;object-fit:cover;flex-shrink:0;border-radius:2px">`:`<div style="width:28px;height:42px;background:var(--border);display:grid;place-items:center;font-size:.9rem;flex-shrink:0;border-radius:2px">📔</div>`}
+      ${c.coverUrl||c.drivePhotoUrl||c.image?`<img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:28px;height:42px;object-fit:cover;flex-shrink:0;border-radius:2px">`:`<div style="width:28px;height:42px;background:var(--border);display:grid;place-items:center;font-size:.9rem;flex-shrink:0;border-radius:2px">📔</div>`}
       <div style="flex:1;min-width:0">
         <div style="font-size:.8rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.title} <span style="color:var(--dim)">#${cleanIssue(c.issue)}</span></div>
         <div style="font-size:.7rem;color:var(--dim)">${c.grade||'?'} · ${c.publisher||'?'}${c.price?' · $'+c.price:''}</div>
@@ -3967,17 +4134,26 @@ function markSold(lid){
   const l=DB.listings.find(x=>x.id===lid); if(!l) return;
   const sp=prompt(`Sold price for ${l.title} #${l.issue||'?'}? (Listed: $${l.price})`,l.price);
   if(sp===null) return;
-  // Get cost from the original comic record
+  // Get cost and Drive photo info from the original comic record
   const comic=DB.comics.find(c=>c.id===l.comicId);
   const costBasis=comic?.cost||'0';
-  DB.sold.push({...l,soldPrice:sp,costBasis,soldAt:new Date().toISOString()});
+  const driveFileId=comic?.driveFileId||null;
+  const soldRecord={...l,soldPrice:sp,costBasis,soldAt:new Date().toISOString(),driveFileId};
+  DB.sold.push(soldRecord);
   DB.listings=DB.listings.filter(x=>x.id!==lid);
   // Auto-log platform fee as expense
   const fee=parseFloat(sp)*0.1;
   DB.receipts.push({id:Date.now().toString(),desc:`Platform fee — ${l.title} #${l.issue}`,amount:fee.toFixed(2),date:new Date().toISOString().slice(0,10),category:'fees',notes:'Auto-logged'});
   saveDB(); renderListings(); renderSold(); updateSoldStats(); updateStats();
   const profit=parseFloat(sp)-(parseFloat(costBasis)||0);
-  toast(`✅ Sold $${parseFloat(sp).toFixed(2)}${costBasis&&costBasis!=='0'?' · Profit: '+(profit>=0?'+':'')+profit.toFixed(2):''}`, profit>=0?'success':'error');}
+  toast(`✅ Sold $${parseFloat(sp).toFixed(2)}${costBasis&&costBasis!=='0'?' · Profit: '+(profit>=0?'+':'')+profit.toFixed(2):''}`, profit>=0?'success':'error');
+  // Auto-delete Drive photo if signed in
+  if(gdriveToken && driveFileId){
+    gdriveDeletePhoto(driveFileId).then(()=>{
+      toast('🗑️ Listing photo removed from Drive','info',2000);
+    });
+  }
+}
 
 // Lot Cost Splitter
 function refreshLotSelector(){
@@ -5109,11 +5285,41 @@ function addAndGradeFromCover(d){
   DB.comics.push(c);
   saveDB(); renderCollection(); updateStats();
 
-  // Confirm save actually worked
+  // Upload photo to Google Drive in background (if signed in)
+  if(gdriveToken && coverSrc && coverSrc.startsWith('data:')){
+    gdriveUploadPhoto(c.id, c.title, c.issue, coverSrc).then(result=>{
+      if(result){
+        const idx=DB.comics.findIndex(x=>x.id===c.id);
+        if(idx!==-1){
+          DB.comics[idx].drivePhotoUrl=result.url;
+          DB.comics[idx].driveFileId=result.fileId;
+          DB.comics[idx].image=''; // clear local base64 — Drive has it now
+          saveDB(); renderCollection();
+          toast('☁️ Photo saved to Google Drive','info',2000);
+        }
+      }
+    }).catch(()=>{});
+  }
+
+  // Immediately try to fetch a clean cover from Comic Vine
+  if(apiKeys.comicvine && c.title){
+    fetchComicVineCover(c.title, c.issue, c.publisher).then(img=>{
+      if(img){
+        const idx=DB.comics.findIndex(x=>x.id===c.id);
+        if(idx!==-1){
+          DB.comics[idx].coverUrl=img;
+          DB.comics[idx].coverAttempted=true;
+          saveDB();
+          const card=document.querySelector(`.comic-card[onclick*="${c.id}"] .card-img`);
+          if(card) card.innerHTML=`<img src="${img}" alt="${c.title}" style="width:100%;height:100%;object-fit:cover;object-position:center top">`;
+        }
+      }
+    }).catch(()=>{});
+  }
+
   const saved = localStorage.getItem('cvp2');
   const savedCount = saved ? JSON.parse(saved).comics?.length : 0;
   console.log('[ComicVault] After save, localStorage has',savedCount,'comics');
-
   toast(`✅ Saved! (${savedCount} comics total)`,'success',2500);
 
   // Now run AI grade in the background and update the comic when done
