@@ -2932,7 +2932,9 @@ function openEdit(id){
   openModal('addModal');
 }
 function clearForm(){
-  ['i-title','i-issue','i-volume','i-releasedate','i-year','i-pub','i-var','i-cost','i-bin','i-notes','i-price'].forEach(id=>document.getElementById(id).value='');
+  ['i-title','i-issue','i-volume','i-releasedate','i-year','i-pub','i-var','i-cost','i-bin','i-notes','i-price'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value='';
+  });
   document.getElementById('i-grade').value=''; document.getElementById('i-rec').value='';
   document.getElementById('gradeOut').style.display='none';
   document.getElementById('imgPreviewWrap').style.display='none';
@@ -2951,34 +2953,40 @@ function setSavedFromScanner(val){
 }
 
 function saveComic(andList=false){
-  const title=document.getElementById('i-title').value.trim();
+  const getVal = id => { try{ return document.getElementById(id)?.value||''; }catch(e){ return ''; } };
+  const title = getVal('i-title').trim();
   if(!title){ alert('Title is required.'); return; }
-  const img=document.getElementById('imgPreview').src;
+  const img = document.getElementById('imgPreview')?.src||'';
   const c={
     id:editId||Date.now().toString(),
-    title, issue:document.getElementById('i-issue').value,
-    volume:document.getElementById('i-volume').value,
-    releaseDate:document.getElementById('i-releasedate').value,
-    year:document.getElementById('i-year').value,
-    publisher:document.getElementById('i-pub').value,
-    variant:document.getElementById('i-var').value,
-    cost:document.getElementById('i-cost').value,
-    bin:document.getElementById('i-bin').value,
-    notes:document.getElementById('i-notes').value,
-    grade:document.getElementById('i-grade').value,
-    price:document.getElementById('i-price').value,
-    rec:document.getElementById('i-rec').value,
-    image:img&&img.startsWith('data:')?img:(editId?DB.comics.find(x=>x.id===editId)?.image||'':''),
-    addedAt:new Date().toISOString()
+    title,
+    issue: getVal('i-issue'),
+    volume: getVal('i-volume'),
+    releaseDate: getVal('i-releasedate'),
+    year: getVal('i-year'),
+    publisher: getVal('i-pub'),
+    variant: getVal('i-var'),
+    cost: getVal('i-cost'),
+    bin: getVal('i-bin'),
+    notes: getVal('i-notes'),
+    grade: getVal('i-grade'),
+    price: getVal('i-price'),
+    rec: getVal('i-rec'),
+    image: img&&img.startsWith('data:')?img:(editId?DB.comics.find(x=>x.id===editId)?.image||'':''),
+    addedAt: new Date().toISOString()
   };
-  if(editId){ const i=DB.comics.findIndex(x=>x.id===editId); if(i!==-1) DB.comics[i]=c; }
-  else DB.comics.push(c);
-  saveDB(); closeModal('addModal'); renderCollection(); updateStats();
-  if(andList){ openSell(c.id); return; }
-  // Return to scanner if that's where we came from
-  if(savedFromScanner){
-    setSavedFromScanner(false);
-    setTimeout(()=>{ navToScanner(); setTimeout(()=>scanNextComic(), 200); }, 250);
+  try{
+    if(editId){ const i=DB.comics.findIndex(x=>x.id===editId); if(i!==-1) DB.comics[i]=c; }
+    else DB.comics.push(c);
+    saveDB(); closeModal('addModal'); renderCollection(); updateStats();
+    if(andList){ openSell(c.id); return; }
+    if(savedFromScanner){
+      setSavedFromScanner(false);
+      setTimeout(()=>{ navToScanner(); setTimeout(()=>scanNextComic(), 200); }, 250);
+    }
+  }catch(err){
+    console.error('saveComic error:',err);
+    alert('Save failed: '+err.message);
   }
 }
 function saveAndList(){ saveComic(true); }
