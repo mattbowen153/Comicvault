@@ -2591,6 +2591,7 @@ function gdriveSignIn(){
       callback: (resp)=>{
         if(resp.error){ updateGdriveStatus('error','Sign in failed: '+resp.error); return; }
         gdriveToken = resp.access_token;
+        gdriveTokenExpiry = Date.now()+(parseInt(resp.expires_in||3600)-60)*1000;
         updateGdriveStatus('connected','✅ Connected to Google Drive');
         document.getElementById('gdriveSignInBtn').style.display='none';
         document.getElementById('gdriveSaveBtn').style.display='block';
@@ -2816,36 +2817,48 @@ function fixCover(id){
 
 async function searchCoversForFix(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
-  const q=document.getElementById('coverSearchInput')?.value||`${c.title} ${cleanIssue(c.issue)}`;
+  const q=document.getElementById('coverSearchInput')?.value||`${c.title} ${cleanIssue(c.issue)} ${c.publisher||''}`.trim();
   const resultsDiv=document.getElementById('coverSearchResults'); if(!resultsDiv) return;
   resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Searching covers…</div></div>`;
 
   if(!apiKeys.comicvine){
-    resultsDiv.innerHTML=`<div style="font-size:.78rem;color:var(--dim);padding:.5rem">Add a Comic Vine API key in Settings for cover search.<br><br>You can still upload your own photo above.</div>`;
+    resultsDiv.innerHTML=`
+      <div style="font-size:.78rem;color:var(--dim);padding:.5rem;line-height:1.7">
+        No Comic Vine key — upload your own photo above, or add a Comic Vine key in Settings.<br><br>
+        <a href="https://comicvine.gamespot.com/api/" target="_blank" style="color:var(--blue)">Get a free Comic Vine API key →</a>
+      </div>`;
     return;
   }
 
   try{
     const url=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume&limit=12`;
     const res=await fetch(url);
+    if(!res.ok) throw new Error('API returned '+res.status);
     const data=await res.json();
-    if(!data.results?.length){
-      resultsDiv.innerHTML=`<div style="font-size:.78rem;color:var(--dim);padding:.5rem">No results found. Try a different search term or upload your own photo.</div>`;
+    const results=data.results?.filter(r=>r.image?.medium_url)||[];
+    if(!results.length){
+      resultsDiv.innerHTML=`<div style="font-size:.78rem;color:var(--dim);padding:.5rem">No results for "${q}". Try searching just the title e.g. "Fantastic Four".</div>`;
       return;
     }
     resultsDiv.innerHTML=`
-      <div style="font-size:.72rem;color:var(--dim);margin-bottom:.5rem">${data.results.length} results — tap the correct cover to use it</div>
+      <div style="font-size:.72rem;color:var(--dim);margin-bottom:.5rem">${results.length} results — tap the correct cover</div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem">
-        ${data.results.filter(r=>r.image?.medium_url).map(r=>`
-          <div style="cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden" onclick="applyCoverFix('${id}','${r.image.medium_url.replace(/'/g,"\\'")}')">
-            <img src="${r.image.medium_url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;display:block">
-            <div style="padding:.2rem .3rem;background:rgba(0,0,0,.5);font-size:.6rem;color:var(--paper2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+        ${results.map(r=>{
+          const safeUrl=r.image.medium_url.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+          return `<div style="cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden;active:border-color:var(--gold)" onclick="applyCoverFix('${id}','${safeUrl}')">
+            <img src="${r.image.medium_url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;display:block" onerror="this.parentElement.style.display='none'">
+            <div style="padding:.2rem .3rem;background:rgba(0,0,0,.7);font-size:.6rem;color:var(--paper2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
               ${r.volume?.name||r.name||'?'} #${r.issue_number||'?'}
             </div>
-          </div>`).join('')}
+          </div>`;
+        }).join('')}
       </div>`;
   }catch(e){
-    resultsDiv.innerHTML=`<div style="font-size:.78rem;color:var(--accent2);padding:.5rem">Search failed. Try uploading your own photo.</div>`;
+    resultsDiv.innerHTML=`
+      <div style="font-size:.78rem;color:var(--accent2);padding:.5rem;line-height:1.6">
+        Search failed: ${e.message}<br><br>
+        Try uploading your own photo above instead.
+      </div>`;
   }
 }
 
@@ -2952,6 +2965,40 @@ function setSavedFromScanner(val){
   try{ sessionStorage.setItem('cvp_fromScanner', val?'1':'0'); }catch(e){}
 }
 
+// ── GOOGLE DRIVE PERSISTENT LOGIN ──
+// Token expires after 1hr — store expiry and auto-refresh
+let gdriveTokenExpiry = 0;
+
+function gdriveAutoSignIn(){
+  // Try to silently re-auth if we have a client ID saved
+  const clientId = localStorage.getItem('cvp_gdrive_client');
+  if(!clientId) return;
+  if(!window.google?.accounts){
+    const script=document.createElement('script');
+    script.src='https://accounts.google.com/gsi/client';
+    script.onload=()=>gdriveAutoSignIn();
+    document.head.appendChild(script);
+    return;
+  }
+  try{
+    const client=google.accounts.oauth2.initTokenClient({
+      client_id:clientId,
+      scope:GDRIVE_SCOPES,
+      prompt:'none', // silent re-auth — no popup
+      callback:(resp)=>{
+        if(resp.error) return; // silent fail — user can manually sign in
+        gdriveToken=resp.access_token;
+        gdriveTokenExpiry=Date.now()+(parseInt(resp.expires_in||3600)-60)*1000;
+        updateGdriveStatus('connected',`✅ Google Drive connected`);
+        document.getElementById('gdriveSignInBtn').style.display='none';
+        document.getElementById('gdriveSaveBtn').style.display='block';
+        document.getElementById('gdriveLoadBtn').style.display='block';
+      }
+    });
+    client.requestAccessToken();
+  }catch(e){}
+}
+
 function saveComic(andList=false){
   const getVal = id => { try{ return document.getElementById(id)?.value||''; }catch(e){ return ''; } };
   const title = getVal('i-title').trim();
@@ -2991,6 +3038,45 @@ function saveComic(andList=false){
 }
 function saveAndList(){ saveComic(true); }
 
+function buildGradePrompt(title, issue, publisher, variant, collectionContext, year){
+  const ctx = collectionContext||0;
+  return `You are a senior CGC-certified comic book grader and market analyst with 20 years experience. You have deep knowledge of current eBay sold listings, GoCollect data, and Heritage Auctions results.
+
+Analyze this comic: "${title}" #${cleanIssue(issue)}${year?' ('+year+')':''}${publisher?' by '+publisher:''}${variant?' ['+variant+']':''}.
+Collector context: They own ${ctx} comic(s) from this publisher/series.
+
+CRITICAL PRICING RULES — do NOT use generic placeholder prices:
+- Base ALL prices on realistic recent sold listings (last 90 days)
+- Common issues (print run over 100k) in VF: typically $3-15 UNLESS key issue
+- Bronze Age (1970-1985) commons: $4-25, keys: $50-5000+
+- Silver Age (1956-1969) commons: $15-100, keys: $200-50000+
+- Copper Age (1985-1990) commons: $3-20, keys: $25-500
+- Modern Age (1990+) commons: $1-8, keys: $15-200
+- Newsstand variants: 20-50% premium over direct edition
+- If NOT a key issue, price honestly (often $3-12)
+- Never default to $8/$15/$25 — give real market-based numbers
+
+SELL STRATEGY RULES:
+- Individual sale: best when price_mid is $15+ and recognizable title
+- Bulk/lot sale: best when price_mid under $10, common issue, hard to move alone
+
+Respond ONLY with valid JSON (no markdown, no backticks):
+{
+"grade":"VF","score":8.0,"grade_label":"Very Fine",
+"condition_summary":"2-3 sentences about condition",
+"positive_factors":["White pages","Strong spine"],"negative_factors":["Minor stress"],
+"price_low":45,"price_mid":65,"price_high":95,
+"price_confidence":"medium","price_basis":"Recent eBay sold listings",
+"cgc_98_estimate":250,"recommendation":"sell","rec_label":"Sell — Good Market Now",
+"rec_reason":"2-3 sentences with market reasoning","is_key_issue":true,
+"key_notes":"First appearance of Venom","market_trend":"rising",
+"sell_strategy":"individual","sell_strategy_reason":"Reason for strategy",
+"best_platform":"eBay BIN","best_platform_reason":"Why this platform",
+"bundle_with":"What to bundle with if needed","time_to_sell":"1-3 weeks",
+"avoid":"Platforms or strategies to avoid"
+}`;
+}
+
 // ══════════════════════════════════
 //  AI GRADE + REC
 // ══════════════════════════════════
@@ -3008,57 +3094,7 @@ async function runGrade(){
     const msgs=[];
     // Include collection context so AI can advise bulk vs individual
     const collectionContext = DB.comics.filter(c=>c.publisher===publisher||c.title===title).length;
-    const prompt=`You are a senior CGC-certified comic book grader and market analyst with 20 years experience. You have deep knowledge of current eBay sold listings, GoCollect data, and Heritage Auctions results.
-
-Analyze this comic: "${title}" #${cleanIssue(issue)}${year?' ('+year+')':''}${publisher?' by '+publisher:''}${variant?' ['+variant+']':''}.
-Collector context: They own ${collectionContext} comic(s) from this publisher/series.
-
-CRITICAL PRICING RULES — do NOT use generic placeholder prices:
-- Base ALL prices on realistic recent sold listings (last 90 days)
-- Common issues (print run over 100k) in VF: typically $3-15 UNLESS key issue
-- Bronze Age (1970-1985) commons: $4-25, keys: $50-5000+
-- Silver Age (1956-1969) commons: $15-100, keys: $200-50000+
-- Copper Age (1985-1990) commons: $3-20, keys: $25-500
-- Modern Age (1990+) commons: $1-8, keys: $15-200
-- Newsstand variants: 20-50% premium over direct edition
-- If this is NOT a key issue, prices should reflect that honestly (often $3-12)
-- If this IS a key issue, explain exactly why and price accordingly
-- Never default to $8/$15/$25 — give real market-based numbers
-
-SELL STRATEGY RULES:
-- Individual sale: best when price_mid is $15+ and it's a recognizable title/issue
-- Bulk/lot sale: best when price_mid is under $10, common issue, or hard to move alone
-- Mixed: some issues sell better bundled with related issues (same run, same arc)
-- Consider eBay fees (~13%), shipping (~$5-6), and time cost when advising
-
-Respond ONLY with valid JSON (no markdown, no backticks):
-{
-"grade":"VF",
-"score":8.0,
-"grade_label":"Very Fine",
-"condition_summary":"2-3 sentences about likely physical condition for this era",
-"positive_factors":["White pages","Strong spine","Sharp corners"],
-"negative_factors":["Minor spine stress common for era"],
-"price_low":45,
-"price_mid":65,
-"price_high":95,
-"price_confidence":"medium",
-"price_basis":"Recent eBay sold listings for VF copies, 12 sales in last 90 days",
-"cgc_98_estimate":250,
-"recommendation":"sell",
-"rec_label":"Sell — Good Market Now",
-"rec_reason":"2-3 sentences with specific market reasoning",
-"is_key_issue":true,
-"key_notes":"First appearance of Venom",
-"market_trend":"rising",
-"sell_strategy":"individual",
-"sell_strategy_reason":"This issue has enough name recognition to sell on its own for $65 — bundling would actually lower your per-comic return",
-"best_platform":"eBay BIN",
-"best_platform_reason":"BIN with best offer works well for this price range — auction only makes sense for keys over $100",
-"bundle_with":"If you want to bundle, pair with other Copper Age DC keys to attract run collectors",
-"time_to_sell":"1-3 weeks at the right price",
-"avoid":"Avoid Facebook Marketplace for this one — comic buyers there typically lowball Silver/Bronze Age books"
-}`;
+    const prompt=buildGradePrompt(title, issue, publisher, variant, collectionContext, year);
     if(imgSrc&&imgSrc.startsWith('data:')){
       msgs.push({role:'user',content:[{type:'image',source:{type:'base64',media_type:imgSrc.split(';')[0].split(':')[1],data:imgSrc.split(',')[1]}},{type:'text',text:prompt}]});
     } else {
@@ -4511,6 +4547,8 @@ function loadApiKeys(){
       document.getElementById('apiTestResult').innerHTML=`<div style="color:var(--green);font-size:.78rem">✓ Anthropic key loaded — tap Test to verify it's working.</div>`;
     }
     updateApiBanner();
+    // Try to silently restore Google Drive session
+    setTimeout(gdriveAutoSignIn, 1000);
     // Trigger cover fetch now that we have API keys
     setTimeout(autoFetchMissingCovers, 500);
   }catch(e){}
@@ -5011,28 +5049,93 @@ function showCoverScanResult(d, photoDataUrl, allComics){
 
 function addFromCoverScan(d){
   setSavedFromScanner(true);
+  // Check for duplicate BEFORE opening form
+  const dup = checkDuplicate(d.title, cleanIssue(d.issue));
+  if(dup){
+    if(!confirm(`⚠ You already have ${dup.title} #${cleanIssue(dup.issue)} in your collection.\n\nAdd it again anyway?`)) return;
+  }
   openAdd();
   setTimeout(()=>{
-    document.getElementById('i-title').value=d.title||'';
-    document.getElementById('i-issue').value=d.issue||'';
-    document.getElementById('i-year').value=d.year||'';
-    document.getElementById('i-pub').value=d.publisher||'';
-    document.getElementById('i-var').value=d.variant||'';
+    const setVal=(id,v)=>{ const el=document.getElementById(id); if(el) el.value=v||''; };
+    setVal('i-title', d.title);
+    setVal('i-issue', cleanIssue(d.issue));
+    setVal('i-year', d.year);
+    setVal('i-pub', d.publisher);
+    setVal('i-var', d.variant);
     const notes=[d.keyNotes,d.creators?'Creators: '+d.creators:'',d.condition_notes].filter(Boolean).join(' | ');
-    document.getElementById('i-notes').value=notes;
+    setVal('i-notes', notes);
     // Auto-populate cover photo from scan
     const coverSrc = document.getElementById('coverPreviewImg')?.src || document.getElementById('barcodePreviewImg')?.src || '';
     if(coverSrc && coverSrc.length > 100){
-      document.getElementById('imgPreview').src=coverSrc;
-      document.getElementById('imgPreviewWrap').style.display='block';
-      document.getElementById('imgPrompt').style.display='none';
+      const prev=document.getElementById('imgPreview');
+      const wrap=document.getElementById('imgPreviewWrap');
+      const prompt=document.getElementById('imgPrompt');
+      if(prev) prev.src=coverSrc;
+      if(wrap) wrap.style.display='block';
+      if(prompt) prompt.style.display='none';
     }
   },150);
 }
 
 function addAndGradeFromCover(d){
-  addFromCoverScan(d);
-  setTimeout(()=>runGrade(),400);
+  // Auto-save directly without opening the form at all
+  const dup = checkDuplicate(d.title, cleanIssue(d.issue));
+  if(dup){
+    if(!confirm(`⚠ You already have ${dup.title} #${cleanIssue(dup.issue)} in your collection.\n\nAdd it again anyway?`)) return;
+  }
+
+  // Build comic object directly from scan data
+  const coverSrc = document.getElementById('coverPreviewImg')?.src || document.getElementById('barcodePreviewImg')?.src || '';
+  const notes=[d.keyNotes,d.creators?'Creators: '+d.creators:'',d.condition_notes].filter(Boolean).join(' | ');
+  const c={
+    id: Date.now().toString(),
+    title: d.title||'',
+    issue: cleanIssue(d.issue)||'',
+    year: d.year||'',
+    publisher: d.publisher||'',
+    variant: d.variant||'',
+    notes: notes,
+    grade: '', price: '', cost: '', rec: '', bin: '', volume: '', releaseDate: '',
+    image: coverSrc&&coverSrc.startsWith('data:')?coverSrc:'',
+    addedAt: new Date().toISOString()
+  };
+  DB.comics.push(c);
+  saveDB(); renderCollection(); updateStats();
+  toast(`✅ ${c.title} #${c.issue||'?'} saved!`,'success',2000);
+
+  // Now run AI grade in the background and update the comic when done
+  gradeComicInBackground(c.id, c.title, c.issue, c.publisher, c.year, coverSrc);
+
+  // Return to scanner
+  setTimeout(()=>{ navToScanner(); setTimeout(()=>scanNextComic(), 200); }, 300);
+}
+
+async function gradeComicInBackground(id, title, issue, publisher, year, imgSrc){
+  if(!apiKeys.anthropic) return;
+  try{
+    const msgs=[];
+    const prompt=buildGradePrompt(title, issue, publisher, year);
+    if(imgSrc&&imgSrc.startsWith('data:')){
+      msgs.push({role:'user',content:[{type:'image',source:{type:'base64',media_type:imgSrc.split(';')[0].split(':')[1],data:imgSrc.split(',')[1]}},{type:'text',text:prompt}]});
+    } else {
+      msgs.push({role:'user',content:prompt});
+    }
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:anthropicHeaders(),
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:msgs})});
+    const data=await res.json();
+    const txt=data.content.map(b=>b.text||'').join('');
+    const d=JSON.parse(txt.replace(/```json|```/g,'').trim());
+    // Update the saved comic with grade and price
+    const idx=DB.comics.findIndex(x=>x.id===id);
+    if(idx!==-1){
+      DB.comics[idx].grade=d.grade||'';
+      DB.comics[idx].price=d.price_mid||'';
+      DB.comics[idx].rec=d.recommendation||'';
+      if(d.key_notes) DB.comics[idx].notes=(DB.comics[idx].notes?DB.comics[idx].notes+' | ':'')+d.key_notes;
+      saveDB(); renderCollection();
+      toast(`🤖 ${title} graded: ${d.grade} — $${d.price_mid}`,'info',3000);
+    }
+  }catch(e){} // silent fail — grade can be added manually
 }
 
 // ── LIVE CAMERA (needs https://) ──
