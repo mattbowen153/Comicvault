@@ -3,150 +3,264 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<!-- ... ALL YOUR ORIGINAL HEAD CONTENT (CSS, fonts, meta tags) is unchanged ... -->
+<meta name="description" content="ComicVault Pro — Comic book collection manager with AI scanning, grading, and deal analysis">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ComicVault">
+<meta name="theme-color" content="#0a0a0f">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230a0a0f'/><text y='.9em' font-size='80' x='10'>📚</text></svg>">
 <title>ComicVault Pro</title>
-<!-- ... your full <style> block here (unchanged) ... -->
+<link rel="manifest" href="#" id="manifestLink">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
 
-<!-- NEW: Google Identity Services for ONE-TIME sign-in -->
-<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+/* ──────────────────────────────────────────────── */
+/* Paste your FULL ORIGINAL CSS HERE (the long :root, *, body, .app-shell etc. block) */
+/* I'm leaving a placeholder so you can insert it easily */
+/* If you lost it, let me know and I'll help reconstruct from memory */
+
+/* Example minimal placeholder - REPLACE WITH YOUR REAL CSS */
+:root {
+  --ink: #0a0a0f; --ink2: #111118; --panel: #16161f; --panel2: #1e1e2a;
+  --border: #2a2a3e; --paper: #f0ece4; --accent: #e63946; --gold: #ffd60a;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--ink); color:var(--paper); font-family:'Barlow',sans-serif; height:100vh; overflow:hidden; }
+.app-shell { display:flex; height:100vh; }
+.sidebar { width:240px; background:#111; }
+.main-area { flex:1; }
+.content-scroll { flex:1; overflow-y:auto; padding:1rem; }
+.page { display:none; }
+.page.active { display:block; }
+.btn { padding:0.6rem 1.2rem; border:none; border-radius:4px; cursor:pointer; }
+.btn-primary { background:var(--accent); color:white; }
+.toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#333; color:white; padding:12px 24px; border-radius:30px; z-index:9999; opacity:0; transition:opacity 0.3s; }
+.toast.show { opacity:1; }
+/* ... your full CSS goes here ... */
+</style>
 </head>
 <body>
 
-<!-- YOUR ENTIRE ORIGINAL BODY (app-shell, sidebar, pages, modals, etc.) is unchanged -->
+<!-- YOUR MAIN APP STRUCTURE – paste your full HTML body content here -->
+<!-- Example skeleton – REPLACE/EXPAND with your original -->
+<div class="app-shell">
+  <div class="sidebar">Sidebar content...</div>
+  <div class="main-area">
+    <div class="top-header">Header...</div>
+    <div class="content-scroll">
+      <div id="page-collection" class="page active">
+        <h2>Your Collection</h2>
+        <div id="comic-grid" class="comic-grid"></div>
+        <button class="btn btn-primary" onclick="showAddComicModal()">+ Add Comic</button>
+      </div>
+      <!-- other pages ... -->
+    </div>
+  </div>
+</div>
+
+<!-- ADD/EDIT MODAL EXAMPLE – adapt to your real one -->
+<div id="addComicModal" class="modal-bg" style="display:none;">
+  <div class="modal">
+    <div class="modal-hdr">
+      <h2 class="modal-title">Add Comic</h2>
+      <button onclick="closeModal('addComicModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input id="comicTitle" placeholder="Title" class="fi">
+      <input id="comicIssue" placeholder="Issue #" type="text" class="fi">
+      <input id="comicYear" placeholder="Year" type="number" class="fi">
+      <input id="comicPrice" placeholder="Estimated Value $" type="number" class="fi">
+      <input id="comicGrade" placeholder="Grade (e.g. VF)" class="fi">
+
+      <!-- Cover upload section -->
+      <button class="btn btn-gold" onclick="startCoverUpload('new')">📸 Add Cover Photo</button>
+      <div id="coverScanPreview" style="display:none; margin:1rem 0; text-align:center;">
+        <img id="coverPreviewImg" style="max-width:180px; border:1px solid #444; border-radius:4px;">
+      </div>
+
+      <button class="btn btn-primary btn-full" onclick="saveNewComic()">Save Comic</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden file input for photos -->
+<input type="file" id="coverScanInput" accept="image/*" style="display:none;">
 
 <div id="toastContainer"></div>
 
 <script>
-// ====================== FIXED & ENHANCED JS ======================
+// ────────────────────────────────────────────────
+// DATA & PERSISTENCE
+// ────────────────────────────────────────────────
 
-// ─── DATA PERSISTENCE (fixed) ─────────────────────────────────────
 let DB = {
   comics: [],
   listings: [],
   sold: [],
   receipts: [],
-  wantList: [],
-  priceAlerts: [],
-  dealCheckHistory: [],
-  finderHistory: []
+  wantList: []
 };
 
+let currentComicIdForCover = null;
+
 function loadDB() {
-  const saved = localStorage.getItem('comicvault_pro_db');
-  if (saved) {
-    const parsed = JSON.parse(saved);
-    Object.assign(DB, parsed);
-    console.log(`✅ Loaded ${DB.comics.length} comics`);
+  try {
+    const saved = localStorage.getItem('comicvault_pro_db');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      DB.comics   = Array.isArray(parsed.comics)   ? parsed.comics   : [];
+      DB.listings = Array.isArray(parsed.listings) ? parsed.listings : [];
+      DB.sold     = Array.isArray(parsed.sold)     ? parsed.sold     : [];
+      DB.receipts = Array.isArray(parsed.receipts) ? parsed.receipts : [];
+      DB.wantList = Array.isArray(parsed.wantList) ? parsed.wantList : [];
+      // Optional: fix number types
+      DB.comics.forEach(c => {
+        if (c.price) c.price = parseFloat(c.price) || 0;
+        if (c.year)  c.year  = parseInt(c.year, 10) || null;
+      });
+      console.log(`Loaded ${DB.comics.length} comics`);
+    }
+  } catch (err) {
+    console.error('Load failed:', err);
   }
 }
 
 function saveDB() {
-  localStorage.setItem('comicvault_pro_db', JSON.stringify(DB));
+  try {
+    localStorage.setItem('comicvault_pro_db', JSON.stringify(DB));
+  } catch (err) {
+    console.error('Save failed:', err);
+    toast('Could not save — storage may be full', 'error');
+  }
 }
 
-// Auto-load + auto-save
-window.addEventListener('load', () => {
-  loadDB();
-  renderCollection();
-  updateStats();
-  renderListings();
-  renderSold();
-  renderAlerts();
-  renderWantListFinder();
-  // any other render functions you already have
-});
-window.addEventListener('beforeunload', saveDB);
+// ────────────────────────────────────────────────
+// TOAST
+// ────────────────────────────────────────────────
 
-// ─── ADD COVER BUTTON (now works) ─────────────────────────────────
-let currentComicIdForCover = null;
-
-function scanFromPhoto(input, mode) {
-  if (!input.files[0]) return;
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    if (mode === 'cover') {
-      const preview = document.getElementById('coverPreviewImg');
-      if (preview) preview.src = e.target.result;
-      document.getElementById('coverScanPreview').style.display = 'block';
-
-      // Save to the comic
-      if (currentComicIdForCover) {
-        const comic = DB.comics.find(c => c.id === currentComicIdForCover);
-        if (comic) {
-          comic.image = e.target.result;   // base64
-          saveDB();
-          toast('✅ Cover saved to comic!', 'success');
-        }
-      }
-    }
-    // barcode mode unchanged
-  };
-  reader.readAsDataURL(input.files[0]);
+function toast(msg, type = 'success', timeout = 2500) {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toastContainer').appendChild(el);
+  setTimeout(() => el.classList.add('show'), 10);
+  setTimeout(() => el.remove(), timeout);
 }
 
-// Call this when user taps "Add Cover" in the add/edit modal
+// ────────────────────────────────────────────────
+// COVER PHOTO HANDLING
+// ────────────────────────────────────────────────
+
 function startCoverUpload(comicId) {
   currentComicIdForCover = comicId;
   document.getElementById('coverScanInput').click();
 }
 
-// ─── GOOGLE DRIVE SYNC (ONE-TIME SIGN-IN ONLY) ─────────────────────
-let gDriveToken = null;
+function scanFromPhoto(input) {
+  if (!input.files?.[0]) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const dataUrl = e.target.result;
+    const preview = document.getElementById('coverPreviewImg');
+    if (preview) preview.src = dataUrl;
+    document.getElementById('coverScanPreview').style.display = 'block';
 
-function initGoogleDrive() {
-  // Replace with YOUR Google Cloud Client ID
-  const CLIENT_ID = '40229488052-d648ifo3amg0hcuie9i3nqqtst0qc71g.apps.googleusercontent.com'; // ← CHANGE THIS
+    if (currentComicIdForCover && currentComicIdForCover !== 'new') {
+      const comic = DB.comics.find(c => c.id === currentComicIdForCover);
+      if (comic) {
+        comic.image = dataUrl;
+        saveDB();
+        toast('Cover saved!', 'success');
+        renderCollection(); // refresh grid if visible
+      }
+    } else {
+      // For new comic → store temp (handled in saveNewComic)
+      window.tempCoverData = dataUrl;
+      toast('Cover ready — save comic to keep it', 'info');
+    }
+  };
+  reader.readAsDataURL(input.files[0]);
+}
 
-  google.accounts.id.initialize({
-    client_id: CLIENT_ID,
-    callback: handleCredentialResponse
+// ────────────────────────────────────────────────
+// MODAL & SAVE EXAMPLE
+// ────────────────────────────────────────────────
+
+function showAddComicModal() {
+  document.getElementById('addComicModal').style.display = 'flex';
+  // clear fields if needed
+  ['comicTitle','comicIssue','comicYear','comicPrice','comicGrade'].forEach(id => {
+    document.getElementById(id).value = '';
   });
-
-  google.accounts.id.renderButton(
-    document.getElementById('googleSignInBtn'),
-    { theme: "outline", size: "large", text: "signin_with" }
-  );
+  document.getElementById('coverScanPreview').style.display = 'none';
+  window.tempCoverData = null;
 }
 
-function handleCredentialResponse(response) {
-  gDriveToken = response.credential;
-  localStorage.setItem('gdrive_token', gDriveToken);
-  toast('✅ Google Drive connected — one-time only!', 'success');
-  // Now you can call uploadToDrive() or downloadFromDrive() anywhere
+function closeModal(id) {
+  document.getElementById(id).style.display = 'none';
 }
 
-// Example sync buttons (add to Settings page)
-function uploadToDrive() {
-  if (!gDriveToken) return alert('Please sign in first');
-  // Simple JSON upload to Drive (you can expand this)
-  const file = new Blob([JSON.stringify(DB)], {type: 'application/json'});
-  // Use Google Drive API v3 (fetch) — token is already saved
-  toast('📤 Backup uploaded to Google Drive', 'success');
+function saveNewComic() {
+  const title = document.getElementById('comicTitle').value.trim();
+  if (!title) return toast('Title is required', 'error');
+
+  const comic = {
+    id: Date.now().toString(),
+    title,
+    issue: document.getElementById('comicIssue').value.trim() || '',
+    year: parseInt(document.getElementById('comicYear').value) || null,
+    price: parseFloat(document.getElementById('comicPrice').value) || 0,
+    grade: document.getElementById('comicGrade').value.trim() || '',
+    image: window.tempCoverData || null,
+    addedAt: new Date().toISOString()
+  };
+
+  DB.comics.push(comic);
+  saveDB();
+  toast('Comic added & saved!', 'success');
+  closeModal('addComicModal');
+  renderCollection();
+  window.tempCoverData = null;
 }
 
-// Auto-restore token on load
-if (localStorage.getItem('gdrive_token')) {
-  gDriveToken = localStorage.getItem('gdrive_token');
+// ────────────────────────────────────────────────
+// RENDER COLLECTION (basic example – expand as needed)
+// ────────────────────────────────────────────────
+
+function renderCollection() {
+  const grid = document.getElementById('comic-grid');
+  if (!grid) return;
+
+  grid.innerHTML = DB.comics.map(c => `
+    <div class="comic-card" style="background:#222; margin:8px; padding:8px; border-radius:6px;">
+      ${c.image ? `<img src="${c.image}" style="width:100%; height:auto; border-radius:4px;">` : '<div style="height:180px; background:#333; display:grid; place-items:center;">No cover</div>'}
+      <div style="padding:8px;">
+        <div style="font-weight:600;">${c.title} #${c.issue || '?'}</div>
+        <div style="font-size:0.9rem; color:#aaa;">
+          ${c.year || '?'} · ${c.grade || 'Ungraded'} · $${c.price.toFixed(2)}
+        </div>
+      </div>
+    </div>
+  `).join('') || '<p style="text-align:center; color:#666; padding:2rem;">No comics yet — add one!</p>';
 }
 
-// Add this button somewhere in Settings (page-settings):
-// <button id="googleSignInBtn" onclick="initGoogleDrive()">Sign in to Google Drive (one-time)</button>
+// ────────────────────────────────────────────────
+// INIT
+// ────────────────────────────────────────────────
 
-// ─── YOUR ORIGINAL FUNCTIONS (unchanged) ──────────────────────────
-// All your checkDeal, runComicFinder, runSellModeSorter, etc. stay exactly the same.
-// I only added the three fixes above at the top of the <script>.
+window.addEventListener('DOMContentLoaded', () => {
+  loadDB();
+  renderCollection();
+  // add other render calls: renderListings(), updateStats(), etc.
+});
 
-// Toast helper (you already had one, keeping it)
-function toast(msg, type='success', timeout=2000) {
-  const t = document.createElement('div');
-  t.className = `toast ${type}`;
-  t.textContent = msg;
-  document.getElementById('toastContainer').appendChild(t);
-  setTimeout(() => t.classList.add('show'), 10);
-  setTimeout(() => t.remove(), timeout);
-}
+window.addEventListener('beforeunload', saveDB);
 
-// End of fixed script
+// Wire cover input
+document.getElementById('coverScanInput')?.addEventListener('change', () => scanFromPhoto(document.getElementById('coverScanInput')));
+
+// End of script
 </script>
 </body>
 </html>
