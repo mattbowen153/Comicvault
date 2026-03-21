@@ -2038,6 +2038,12 @@ function saveDB(){
         localStorage.setItem('cvp2_snap', JSON.stringify({...DB, snapDate:today}));
       }
     }catch(e){}
+
+    // Auto-sync to Google Drive if signed in (debounced 3s)
+    if(gdriveToken){
+      clearTimeout(window._gdriveSaveTimer);
+      window._gdriveSaveTimer = setTimeout(()=>gdriveSave(), 3000);
+    }
   }
 }
 
@@ -2746,16 +2752,6 @@ function saveGdriveClient(){
   gdriveSignIn();
 }
 
-// Auto-save to Drive after every saveDB if connected
-const _origSaveDB = saveDB;
-function saveDB(){
-  _origSaveDB();
-  // Silently sync to Drive if connected (debounced 3s)
-  if(gdriveToken && DB.comics.length>0){
-    clearTimeout(window._gdriveSaveTimer);
-    window._gdriveSaveTimer = setTimeout(()=>gdriveSave(), 3000);
-  }
-}
 function fixCover(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   const existing=document.getElementById('fixCoverModal');
@@ -3693,6 +3689,56 @@ function quickAddToBundle(comicId, bundleId){
 
 function quickAssignBin(id, bin){ saveBin(id, bin); }
 
+function assignBin(id){
+  const c=DB.comics.find(x=>x.id===id); if(!c) return;
+  const allBins=[...new Set(DB.comics.filter(x=>x.bin).map(x=>x.bin))].sort();
+  const existing=document.getElementById('binModal');
+  if(existing) existing.remove();
+  const modal=document.createElement('div');
+  modal.id='binModal';
+  modal.className='modal-bg';
+  modal.style.cssText='display:flex';
+  modal.innerHTML=`
+    <div class="modal" style="max-width:360px">
+      <div class="modal-hdr">
+        <div class="modal-title">📦 Assign Storage Location</div>
+        <button class="modal-x" onclick="document.getElementById('binModal').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">
+          Assign <strong style="color:var(--paper)">${c.title} #${cleanIssue(c.issue)}</strong> to a bin or box.
+        </div>
+        ${allBins.length?`
+        <div style="margin-bottom:.8rem">
+          <div style="font-size:.7rem;letter-spacing:1.5px;color:var(--dim);font-family:'Barlow Condensed';margin-bottom:.4rem">YOUR EXISTING LOCATIONS</div>
+          <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+            ${allBins.map(b=>`<button class="btn btn-ghost btn-sm" onclick="quickAssignBin('${id}','${b.replace(/'/g,"\\'")}');" style="font-size:.78rem">${b}</button>`).join('')}
+          </div>
+        </div>`:''}
+        <label class="fl">Location Name</label>
+        <input class="fi" id="binInput" placeholder="e.g. Bin A, Box 1, Long Box 2…" value="${c.bin||''}">
+        <div style="display:flex;gap:.6rem;margin-top:.8rem">
+          <button class="btn btn-gold" style="flex:1" onclick="saveBin('${id}')">💾 Save</button>
+          ${c.bin?`<button class="btn btn-ghost" onclick="saveBin('${id}','')">✕ Remove</button>`:''}
+          <button class="btn btn-ghost" onclick="document.getElementById('binModal').remove()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  setTimeout(()=>document.getElementById('binInput')?.focus(),100);
+}
+
+function saveBin(id, forceVal){
+  const val=forceVal!==undefined?forceVal:(document.getElementById('binInput')?.value||'').trim();
+  const idx=DB.comics.findIndex(x=>x.id===id); if(idx===-1) return;
+  DB.comics[idx].bin=val;
+  saveDB();
+  document.getElementById('binModal')?.remove();
+  const display=document.getElementById('binDisplay_'+id);
+  if(display){ display.textContent=val||'Not assigned'; display.style.color=val?'var(--gold)':'var(--dim)'; }
+  toast(val?`📦 Assigned to ${val}`:'Location removed');
+}
+
 function openSell(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   sellId=id;
@@ -4390,8 +4436,17 @@ const PAGE_TITLES_EXT={scanner:'Barcode Scanner',settings:'Settings & Data',rawv
 Object.assign(PAGE_TITLES, PAGE_TITLES_EXT);
 
 function navToScanner(){
-  const el=document.querySelector('[data-page="scanner"]');
-  if(el) nav(el);
+  // Directly show scanner page without relying on PAGE_TITLES being fully loaded
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const scanPage = document.getElementById('page-scanner');
+  if(scanPage) scanPage.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.querySelectorAll('[data-page="scanner"]').forEach(n=>n.classList.add('active'));
+  document.querySelectorAll('.bnav-item').forEach(n=>n.classList.remove('active'));
+  const titleEl = document.getElementById('pageTitle');
+  if(titleEl) titleEl.textContent = 'Barcode Scanner';
+  closeSidebar();
+  document.getElementById('contentScroll').scrollTop=0;
 }
 
 // ══════════════════════════════════
@@ -4492,16 +4547,19 @@ try{ if(localStorage.getItem('cvp_multiscan')==='1'){ multiScanMode=true; setTim
 
 function scanNextComic(){
   // Clear result and preview but keep multi-scan mode and queue intact
-  document.getElementById('scanResult').style.display='none';
-  document.getElementById('coverScanPreview').style.display='none';
-  document.getElementById('photoScanPreview').style.display='none';
-  document.getElementById('coverScanStatus').textContent='';
-  document.getElementById('photoScanStatus').textContent='';
+  ['scanResult','coverScanPreview','photoScanPreview'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.style.display='none';
+  });
+  ['coverScanStatus','photoScanStatus'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.textContent='';
+  });
   // Reset file inputs so same photo can be re-selected
-  document.getElementById('coverScanInput').value='';
-  document.getElementById('barcodePhotoInput').value='';
+  ['coverScanInput','barcodePhotoInput'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value='';
+  });
   // Scroll back to top of scanner
-  document.getElementById('contentScroll').scrollTop=0;
+  const scroll=document.getElementById('contentScroll');
+  if(scroll) scroll.scrollTop=0;
 }
 
 function toggleMultiScan(on){
