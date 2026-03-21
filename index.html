@@ -2976,9 +2976,7 @@ function saveComic(andList=false){
   // Return to scanner if that's where we came from
   if(savedFromScanner){
     savedFromScanner=false;
-    const scannerNav=document.querySelector('[data-page="scanner"]');
-    if(scannerNav) nav(scannerNav);
-    setTimeout(()=>scanNextComic(),100);
+    setTimeout(()=>{ navToScanner(); setTimeout(()=>scanNextComic(), 200); }, 250);
   }
 }
 function saveAndList(){ saveComic(true); }
