@@ -4117,6 +4117,114 @@ function saveComic(andList=false){
 }
 function saveAndList(){ saveComic(true); }
 
+// After grading, fetch live prices via web search and update the price display
+async function fetchLivePriceForGrade(title, issue, publisher, grade, gradeData){
+  const priceRow=document.querySelector('.price-row');
+  if(!priceRow||!apiKeys.anthropic) return;
+
+  const liveTag=document.createElement('div');
+  liveTag.id='livePriceTag';
+  liveTag.style.cssText='font-size:.7rem;color:var(--dim);margin-top:.3rem;padding:0 .2rem';
+  liveTag.textContent='🔍 Fetching live prices from 2 sources…';
+  priceRow.insertAdjacentElement('afterend',liveTag);
+
+  const q=`${title} ${issue?'#'+issue:''} ${publisher||''} comic`;
+  const enc=encodeURIComponent;
+
+  try{
+    // Run two searches in parallel — eBay sold + MyComicShop
+    const [ebayRes, mcRes] = await Promise.allSettled([
+      fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST', headers:anthropicHeaders(),
+        body:JSON.stringify({
+          model:'claude-sonnet-4-20250514', max_tokens:300,
+          tools:[{type:'web_search_20250305',name:'web_search'}],
+          messages:[{role:'user',content:`Search eBay COMPLETED sold listings for "${q}" grade ${grade}. List the actual sale prices you find. Return ONLY JSON:
+{"prices":[2.40,8.00,12.00],"count":3,"note":"what you actually found"}`}]
+        })
+      }),
+      fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST', headers:anthropicHeaders(),
+        body:JSON.stringify({
+          model:'claude-sonnet-4-20250514', max_tokens:300,
+          tools:[{type:'web_search_20250305',name:'web_search'}],
+          messages:[{role:'user',content:`Search MyComicShop and GoCollect for the price of "${q}" in ${grade} condition. Return ONLY JSON:
+{"prices":[5.00,8.00],"count":2,"note":"what you found on these sites"}`}]
+        })
+      })
+    ]);
+
+    // Parse both results
+    const parsePrices=async(result)=>{
+      if(result.status!=='fulfilled') return null;
+      try{
+        const data=await result.value.json();
+        const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+        return JSON.parse(txt);
+      }catch(e){ return null; }
+    };
+
+    const [ebay, mc] = await Promise.all([parsePrices(ebayRes), parsePrices(mcRes)]);
+
+    // Collect all prices from both sources
+    const allPrices=[
+      ...(ebay?.prices||[]),
+      ...(mc?.prices||[])
+    ].map(p=>parseFloat(p)).filter(p=>p>0&&p<5000);
+
+    if(!allPrices.length) throw new Error('No prices found');
+
+    // Sort for stats
+    allPrices.sort((a,b)=>a-b);
+
+    // ── OUTLIER SANITY CHECK ────────────────────────────────
+    // Remove prices that are more than 4x the median (outlier CGC slabs etc.)
+    const median=allPrices[Math.floor(allPrices.length/2)];
+    const sane=allPrices.filter(p=>p<=median*4&&p>=median*0.1);
+    const finalPrices=sane.length>=2?sane:allPrices; // fallback if too aggressive
+
+    const low=finalPrices[0];
+    const high=finalPrices[finalPrices.length-1];
+    const mid=finalPrices.reduce((a,b)=>a+b,0)/finalPrices.length;
+
+    // Flag if outliers were removed
+    const outliersRemoved=allPrices.length-finalPrices.length;
+    const outlierWarning=outliersRemoved>0
+      ?`<span style="color:var(--gold)"> · ⚠ ${outliersRemoved} outlier${outliersRemoved>1?'s':''} removed (likely slabs/variants)</span>`:'';
+
+    // Cross-source confidence
+    const sourceCount=[ebay,mc].filter(s=>s?.prices?.length>0).length;
+    const confColor=sourceCount>=2?'var(--green)':allPrices.length>=3?'var(--gold)':'var(--accent2)';
+    const confLabel=sourceCount>=2?'2 sources agree':'Single source — verify before pricing';
+
+    // Update price fields
+    if(!document.getElementById('i-price').value) document.getElementById('i-price').value=mid.toFixed(0);
+
+    priceRow.innerHTML=`
+      <div class="pr-item"><div class="pr-lbl">LOW</div><div class="pr-val text-dim">$${low.toFixed(2)}</div></div>
+      <div class="pr-item"><div class="pr-lbl">MID</div><div class="pr-val text-gold">$${mid.toFixed(2)}</div></div>
+      <div class="pr-item"><div class="pr-lbl">HIGH</div><div class="pr-val text-dim">$${high.toFixed(2)}</div></div>
+      ${gradeData.cgc_98_estimate?`<div class="pr-item"><div class="pr-lbl">CGC 9.8</div><div class="pr-val" style="color:var(--purple)">$${gradeData.cgc_98_estimate}</div></div>`:''}`;
+
+    liveTag.innerHTML=`
+      <div style="margin-top:.3rem">
+        <span style="color:${confColor}">● ${confLabel}</span>${outlierWarning}
+        <div style="margin-top:.2rem;color:var(--dim)">
+          ${finalPrices.length} sales: ${finalPrices.map(p=>'$'+p.toFixed(2)).join(', ')}
+          <span style="margin-left:.4rem">
+            <a href="https://www.ebay.com/sch/i.html?_nkw=${enc(q+' '+grade)}&LH_Sold=1&LH_Complete=1" target="_blank" style="color:var(--blue)">eBay ↗</a>
+          </span>
+        </div>
+        ${ebay?.note?`<div style="margin-top:.1rem;color:var(--dim)">${ebay.note}</div>`:''}
+      </div>`;
+
+  }catch(e){
+    if(!document.getElementById('i-price').value && gradeData.price_mid)
+      document.getElementById('i-price').value=gradeData.price_mid;
+    liveTag.innerHTML=`<span style="color:var(--dim)">📊 Estimate (live search failed) · <a href="https://www.ebay.com/sch/i.html?_nkw=${enc(q)}&LH_Sold=1" target="_blank" style="color:var(--blue)">Check eBay ↗</a></span>`;
+  }
+}
+
 function buildGradePrompt(title, issue, publisher, variant, collectionContext, year){
   const ctx = collectionContext||0;
   return `You are a senior comic book grader and market analyst. Analyze this comic and provide honest pricing.
@@ -4185,8 +4293,11 @@ async function runGrade(){
     const txt=data.content.map(b=>b.text||'').join('');
     const d=JSON.parse(txt.replace(/```json|```/g,'').trim());
     if(!document.getElementById('i-grade').value) document.getElementById('i-grade').value=d.grade;
-    if(!document.getElementById('i-price').value) document.getElementById('i-price').value=d.price_mid;
+    // Don't auto-fill price yet — we'll get a live price below
     if(!document.getElementById('i-rec').value) document.getElementById('i-rec').value=d.recommendation;
+
+    // Step 2: Live price lookup via web search (non-blocking)
+    fetchLivePriceForGrade(title, issue, publisher, d.grade, d);
     const recColor=d.recommendation==='hold'?'var(--purple)':d.recommendation==='sell'?'var(--accent2)':'var(--dim)';
     out.style.display='block';
     out.innerHTML=`<div class="grade-panel">
@@ -5527,88 +5638,130 @@ async function runScan(){
   const grade=document.getElementById('psGrade').value;
   if(!q){ toast('Enter a comic title.','error'); return; }
   const div=document.getElementById('psResults');
-  div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Researching prices…</div></div>`;
+  div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Searching 2 sources for live prices…</div></div>`;
 
   const enc=encodeURIComponent;
   const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${enc(q+' comic '+grade)}&LH_Sold=1&LH_Complete=1`;
   const mcUrl=`https://www.mycomicshop.com/search?q=${enc(q)}`;
   const gcUrl=`https://gocollect.com/search?q=${enc(q)}`;
-  const hipUrl=`https://www.hipcomicreg.net/search?q=${enc(q)}`;
+
+  // Helper: parse prices array from a web-search response
+  const fetchPrices=async(searchPrompt)=>{
+    try{
+      const res=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST', headers:anthropicHeaders(),
+        body:JSON.stringify({
+          model:'claude-sonnet-4-20250514', max_tokens:400,
+          tools:[{type:'web_search_20250305',name:'web_search'}],
+          messages:[{role:'user',content:searchPrompt}]
+        })
+      });
+      const data=await res.json();
+      const txt=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+      const parsed=JSON.parse(txt);
+      return {
+        prices:(parsed.prices||[]).map(p=>parseFloat(p)).filter(p=>p>0&&p<5000),
+        note:parsed.note||'',
+        isKey:parsed.is_key_issue||false,
+        keyReason:parsed.key_reason||''
+      };
+    }catch(e){ return {prices:[],note:'',isKey:false,keyReason:''}; }
+  };
 
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',headers:anthropicHeaders(),
-      body:JSON.stringify({
-        model:'claude-haiku-4-5-20251001',max_tokens:800,
-        messages:[{role:'user',content:`You are a comic book price guide expert. Give realistic price estimates for: "${q}" in ${grade} condition.
+    // Two parallel searches
+    const [ebay, mc]=await Promise.all([
+      fetchPrices(`Search eBay COMPLETED sold listings for "${q}" in ${grade} condition. Find all individual raw (ungraded/raw) copy sales only — not slabs. Return ONLY JSON:
+{"prices":[2.40,8.00,12.00],"is_key_issue":false,"key_reason":"Common issue","note":"What you found"}`),
+      fetchPrices(`Search MyComicShop and GoCollect for "${q}" in ${grade} condition. What is the listed price range? Return ONLY JSON:
+{"prices":[5.00,9.00],"note":"What you found on these sites"}`)
+    ]);
 
-IMPORTANT RULES:
-1. You do NOT have real-time sales data — be honest about this
-2. Give price RANGES based on: era (Silver/Bronze/Copper/Modern), whether it's a key issue, print run, and current collector demand
-3. If it IS a key issue, explain exactly why and price accordingly
-4. If it is NOT a key issue, be honest — most modern commons are $2-8
-5. Always recommend the user verify on eBay sold listings for the actual current price
+    const allPrices=[...ebay.prices,...mc.prices].sort((a,b)=>a-b);
 
-Respond ONLY with valid JSON:
-{
-  "title":"${q}",
-  "grade":"${grade}",
-  "is_key_issue":true,
-  "key_reason":"First appearance of X, origin issue, etc. or 'Common issue, no major significance'",
-  "era":"Modern/Copper/Bronze/Silver/Golden",
-  "price_low":5,
-  "price_mid":12,
-  "price_high":25,
-  "price_confidence":"low|medium|high",
-  "confidence_note":"Why confidence is low/medium/high — e.g. key issues have consistent data, commons vary widely",
-  "note":"2-3 sentences of honest market context. Mention if print run was high, if demand is seasonal, etc.",
-  "cgc_multiplier":"Raw x2-3 for CGC 9.8 typically",
-  "verify_note":"Always check eBay Sold Listings for the most accurate current price"
-}`}]})});
-    const data=await res.json();
-    const d=JSON.parse(data.content.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim());
-
-    const confColor=d.price_confidence==='high'?'var(--green)':d.price_confidence==='medium'?'var(--gold)':'var(--accent2)';
-    const confLabel=d.price_confidence==='high'?'High confidence':'Medium confidence — verify on eBay';
-    if(d.price_confidence!=='high') d.price_confidence='low';
-
-    div.innerHTML=`
-      <div style="background:var(--panel);border:1px solid var(--border);padding:1.2rem;border-radius:4px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.8rem;flex-wrap:wrap;gap:.4rem">
-          <div>
-            <div style="font-family:'Bebas Neue';font-size:1.2rem;letter-spacing:2px;color:var(--paper)">${d.title}</div>
-            <div style="font-size:.72rem;color:var(--dim)">${d.era||''} · ${d.is_key_issue?'<span style="color:var(--gold)">🔑 KEY ISSUE</span>':'Common Issue'}</div>
-          </div>
-          <span class="grade-pip g-vf" style="position:static;display:inline-block">${d.grade}</span>
-        </div>
-
-        ${d.is_key_issue?`<div style="padding:.5rem .8rem;background:rgba(255,214,10,.08);border:1px solid rgba(255,214,10,.25);border-radius:4px;font-size:.78rem;color:var(--gold);margin-bottom:.8rem">🔑 ${d.key_reason}</div>`:''}
-
-        <div class="price-grid" style="margin-bottom:.8rem">
-          <div class="ps"><div class="ps-name">LOW</div><div class="ps-price">$${d.price_low}</div></div>
-          <div class="ps"><div class="ps-name">MID</div><div class="ps-price text-gold">$${d.price_mid}</div></div>
-          <div class="ps"><div class="ps-name">HIGH</div><div class="ps-price">$${d.price_high}</div></div>
-        </div>
-
-        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;padding:.5rem .7rem;background:rgba(255,255,255,.03);border-radius:4px;font-size:.75rem">
-          <span style="color:${confColor}">●</span>
-          <span style="color:var(--dim)">${confLabel}</span>
-        </div>
-
-        <div style="font-size:.8rem;color:var(--paper2);line-height:1.6;margin-bottom:1rem">${d.note}</div>
-
-        <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem;font-weight:700;letter-spacing:1px">VERIFY CURRENT PRICE →</div>
+    if(!allPrices.length){
+      // Both searches came back empty — show links
+      div.innerHTML=`<div style="background:var(--panel);border:1px solid var(--border);padding:1rem;border-radius:4px">
+        <div style="font-size:.82rem;color:var(--paper2);margin-bottom:.8rem">Couldn't find enough sold listings for <strong>${q}</strong> — check directly:</div>
         <div style="display:flex;flex-wrap:wrap;gap:.4rem">
           <a href="${ebayUrl}" target="_blank" class="btn btn-primary btn-sm" style="font-size:.72rem;text-decoration:none">📦 eBay Sold</a>
           <a href="${mcUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">🏪 MyComicShop</a>
           <a href="${gcUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">📊 GoCollect</a>
-          <a href="${hipUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">📈 Hip Comic</a>
+        </div></div>`;
+      return;
+    }
+
+    // ── OUTLIER SANITY CHECK ──────────────────────────────
+    const median=allPrices[Math.floor(allPrices.length/2)];
+    const sane=allPrices.filter(p=>p<=median*4&&p>=median*0.15);
+    const final=sane.length>=2?sane:allPrices;
+    const removed=allPrices.length-final.length;
+
+    const low=final[0];
+    const high=final[final.length-1];
+    const mid=final.reduce((a,b)=>a+b,0)/final.length;
+    const spread=((high-low)/mid*100).toFixed(0);
+
+    // Confidence based on number of data points and source agreement
+    const sourceCount=[ebay.prices.length>0,mc.prices.length>0].filter(Boolean).length;
+    const confColor=sourceCount>=2&&final.length>=3?'var(--green)':final.length>=2?'var(--gold)':'var(--accent2)';
+    const confLabel=sourceCount>=2?`✅ ${sourceCount} sources, ${final.length} sales found`:`⚠ ${final.length} sale${final.length!==1?'s':''} found — limited data`;
+
+    const isKey=ebay.isKey||false;
+
+    div.innerHTML=`
+      <div style="background:var(--panel);border:1px solid var(--border);padding:1.2rem;border-radius:4px">
+
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.8rem;flex-wrap:wrap;gap:.4rem">
+          <div>
+            <div style="font-family:'Bebas Neue';font-size:1.2rem;letter-spacing:2px;color:var(--paper)">${q}</div>
+            <div style="font-size:.72rem;color:var(--dim)">${isKey?'<span style="color:var(--gold)">🔑 KEY ISSUE</span>':'Common Issue'} · ${grade}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:.4rem;padding:.3rem .6rem;border-radius:4px;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.2)">
+            <span style="color:var(--green);font-size:.75rem">🔍 Live</span>
+          </div>
         </div>
-        <div style="margin-top:.6rem;font-size:.7rem;color:var(--dim);font-style:italic">
-          ⚠ AI price estimates are based on training data, not live sales. Always verify on eBay Sold Listings before buying or selling.
+
+        ${isKey?`<div style="padding:.5rem .8rem;background:rgba(255,214,10,.08);border:1px solid rgba(255,214,10,.25);border-radius:4px;font-size:.78rem;color:var(--gold);margin-bottom:.8rem">🔑 ${ebay.keyReason}</div>`:''}
+
+        <div class="price-grid" style="margin-bottom:.5rem">
+          <div class="ps"><div class="ps-name">LOW</div><div class="ps-price">$${low.toFixed(2)}</div></div>
+          <div class="ps"><div class="ps-name">AVG</div><div class="ps-price text-gold">$${mid.toFixed(2)}</div></div>
+          <div class="ps"><div class="ps-name">HIGH</div><div class="ps-price">$${high.toFixed(2)}</div></div>
+        </div>
+
+        <!-- All actual prices found -->
+        <div style="font-size:.72rem;color:var(--dim);padding:.4rem .5rem;background:rgba(255,255,255,.03);border-radius:3px;margin-bottom:.5rem">
+          📊 Actual sales: ${final.map(p=>'$'+p.toFixed(2)).join(' · ')}
+          ${removed?`<span style="color:var(--gold)"> · ${removed} outlier${removed>1?'s':''} removed</span>`:''}
+        </div>
+
+        <!-- Confidence -->
+        <div style="font-size:.73rem;padding:.35rem .6rem;border-radius:3px;background:rgba(255,255,255,.03);margin-bottom:.8rem;color:${confColor}">
+          ${confLabel}
+          ${parseInt(spread)>100?`<span style="color:var(--gold)"> · Wide spread — condition matters a lot for this comic</span>`:''}
+        </div>
+
+        ${ebay.note?`<div style="font-size:.78rem;color:var(--paper2);line-height:1.6;margin-bottom:.8rem">${ebay.note}</div>`:''}
+        ${mc.note&&mc.note!==ebay.note?`<div style="font-size:.75rem;color:var(--dim);margin-bottom:.8rem">${mc.note}</div>`:''}
+
+        <div style="font-size:.75rem;color:var(--dim);margin-bottom:.5rem;font-weight:700;letter-spacing:1px">CHECK IT YOURSELF →</div>
+        <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+          <a href="${ebayUrl}" target="_blank" class="btn btn-primary btn-sm" style="font-size:.72rem;text-decoration:none">📦 eBay Sold</a>
+          <a href="${mcUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">🏪 MyComicShop</a>
+          <a href="${gcUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">📊 GoCollect</a>
         </div>
       </div>`;
-  }catch(e){ showFetchBlockedError(div, e, true); }
+
+  }catch(e){
+    div.innerHTML=`<div style="background:var(--panel);border:1px solid rgba(255,100,0,.3);padding:1rem;border-radius:4px">
+      <div style="font-size:.8rem;color:var(--accent2);margin-bottom:.8rem">⚠ Live search unavailable — check directly:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+        <a href="${ebayUrl}" target="_blank" class="btn btn-primary btn-sm" style="font-size:.72rem;text-decoration:none">📦 eBay Sold</a>
+        <a href="${mcUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">🏪 MyComicShop</a>
+        <a href="${gcUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">📊 GoCollect</a>
+      </div></div>`;
+  }
 }
 
 // ══════════════════════════════════
