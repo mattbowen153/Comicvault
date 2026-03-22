@@ -3102,37 +3102,43 @@ function applyEnhancedCover(id, base64){
 async function identifyAndFixCover(id, input){
   const file=input.files[0]; if(!file) return;
   const status=document.getElementById('coverAIStatus');
-  if(status){ status.style.display='block'; status.textContent='📷 Processing photo…'; }
+  const resultsDiv=document.getElementById('coverSearchResults');
+  if(status){ status.style.display='block'; status.textContent='🤖 Reading comic…'; }
+  if(resultsDiv) resultsDiv.innerHTML='';
 
   const reader=new FileReader();
   reader.onload=async e=>{
     const base64=e.target.result;
 
-    // Step 1: Auto-enhance/crop the photo using canvas + AI
-    const enhancedBase64 = await autoEnhancePhoto(base64, file.type);
-    const finalBase64 = enhancedBase64 || base64;
-
-    if(status) status.textContent='🤖 AI identifying comic…';
-
-    // Step 2: If no Anthropic key, just use enhanced photo directly
     if(!apiKeys.anthropic){
-      uploadCoverFromBase64(id, finalBase64);
-      if(status) status.textContent='✅ Cover saved!';
+      // No AI key — just save photo as-is
+      uploadCoverFromBase64(id, base64);
+      if(status) status.textContent='✅ Photo saved as cover';
       return;
     }
 
     try{
+      // Step 1: AI reads the photo to get title, issue, publisher, barcode
+      if(status) status.textContent='🔍 AI reading cover details…';
       const res=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
         headers:anthropicHeaders(),
         body:JSON.stringify({
           model:'claude-sonnet-4-20250514',
-          max_tokens:300,
+          max_tokens:400,
           messages:[{role:'user',content:[
             {type:'image',source:{type:'base64',media_type:file.type,data:base64.split(',')[1]}},
-            {type:'text',text:`Identify this comic book cover. Return ONLY JSON:
-{"title":"exact title","issue":"number","publisher":"publisher","variant":"variant name if any","confirmed":true}
-No explanation, just JSON.`}
+            {type:'text',text:`Read this comic book photo carefully. Extract ALL text you can see.
+Return ONLY JSON (no explanation):
+{
+  "title": "exact series title from cover",
+  "issue": "issue number only (digits)",
+  "publisher": "Marvel/DC/Image/etc",
+  "variant": "variant description if any e.g. Variant Edition",
+  "barcode": "barcode number if visible (usually 5-13 digits)",
+  "year": "year if visible",
+  "search_terms": ["3-4 specific search terms to find this exact cover image online"]
+}`}
           ]}]
         })
       });
@@ -3140,38 +3146,122 @@ No explanation, just JSON.`}
       const txt=(data.content||[]).map(b=>b.text||'').join('');
       const d=JSON.parse(txt.replace(/```json|```/g,'').trim());
 
-      if(status) status.textContent=`✅ ${d.title} #${d.issue}${d.variant?' ('+d.variant+')':''}`;
+      if(status) status.textContent=`✅ Found: ${d.title} #${d.issue}${d.variant?' · '+d.variant:''}`;
 
-      // Show before/after with enhanced photo
-      const resultsDiv=document.getElementById('coverSearchResults');
-      if(resultsDiv && enhancedBase64){
-        window._enhancedCover=enhancedBase64;
-        resultsDiv.innerHTML=`
-          <div style="font-size:.78rem;color:var(--dim);margin-bottom:.5rem">✨ Enhanced cover — tap to use</div>
-          <div style="display:flex;gap:.8rem">
-            <div style="flex:1;text-align:center">
-              <div style="font-size:.65rem;color:var(--dim);margin-bottom:.3rem">YOUR PHOTO</div>
-              <img src="${base64}" style="width:100%;max-height:180px;object-fit:cover;border:1px solid var(--border);border-radius:2px">
-            </div>
-            <div style="flex:1;text-align:center;cursor:pointer" onclick="applyEnhancedCover('${id}',window._enhancedCover)">
-              <div style="font-size:.65rem;color:var(--gold);margin-bottom:.3rem">ENHANCED ✨</div>
-              <img src="${enhancedBase64}" style="width:100%;max-height:180px;object-fit:cover;border:2px solid var(--gold);border-radius:2px">
-            </div>
-          </div>
-          <div style="display:flex;gap:.5rem;margin-top:.6rem">
-            <button class="btn btn-gold" style="flex:1" onclick="applyEnhancedCover('${id}',window._enhancedCover)">✨ Use Enhanced</button>
-            <button class="btn btn-ghost" style="flex:1" onclick="uploadCoverFromBase64('${id}','${base64.slice(0,20)}...')">Use Original</button>
-          </div>`;
-        resultsDiv.querySelectorAll('.btn-ghost')[0].onclick=()=>uploadCoverFromBase64(id,base64);
-      } else {
-        uploadCoverFromBase64(id, finalBase64);
+      // Update comic record with confirmed details
+      const idx=DB.comics.findIndex(x=>x.id===id);
+      if(idx!==-1){
+        if(d.title) DB.comics[idx].title=d.title;
+        if(d.issue) DB.comics[idx].issue=cleanIssue(d.issue);
+        if(d.publisher) DB.comics[idx].publisher=d.publisher;
+        if(d.variant) DB.comics[idx].variant=d.variant;
+        if(d.year) DB.comics[idx].year=d.year;
+        saveDB();
       }
-    }catch(e){
-      uploadCoverFromBase64(id, finalBase64);
-      if(status) status.textContent='✅ Cover saved!';
+
+      // Step 2: Search multiple cover databases using identified details
+      if(status) status.textContent='🌐 Searching cover databases…';
+      const covers=await findCoverImages(d.title, d.issue, d.publisher, d.variant, d.barcode, d.search_terms, base64);
+
+      // Always include user's photo as an option
+      covers.unshift({url:base64,label:'Your photo',source:'Your Photo',isBase64:true});
+
+      showCoverResults(id, covers);
+      if(status) status.textContent=`Found ${covers.length} cover options — tap to use`;
+
+    }catch(err){
+      console.warn('[Cover] Identify failed:',err);
+      // Fallback — just use photo
+      uploadCoverFromBase64(id, base64);
+      if(status) status.textContent='✅ Photo saved as cover';
     }
   };
   reader.readAsDataURL(file);
+}
+
+// Master cover image finder — searches all available databases
+async function findCoverImages(title, issue, publisher, variant, barcode, searchTerms, photoBase64){
+  const results=[];
+  const isMarvel=(publisher||'').toLowerCase().includes('marvel');
+  const isDC=(publisher||'').toLowerCase().includes('dc');
+  const isImage=(publisher||'').toLowerCase().includes('image');
+
+  // Source 1: Comic Vine via CORS proxy (most comprehensive)
+  if(apiKeys.comicvine){
+    try{
+      const q=`${title} ${issue} ${publisher||''}`.trim();
+      const cvUrl=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume&limit=10`;
+      const proxy=`https://corsproxy.io/?${encodeURIComponent(cvUrl)}`;
+      const res=await fetch(proxy);
+      if(res.ok){
+        const raw=await res.text();
+        const data=JSON.parse(raw);
+        (data.results||[]).filter(r=>r.image?.medium_url).forEach(r=>{
+          results.push({url:r.image.medium_url,label:`${r.volume?.name||title} #${r.issue_number}`,source:'Comic Vine'});
+          // Also add super URL (higher res)
+          if(r.image.super_url) results.push({url:r.image.super_url,label:`${r.volume?.name||title} #${r.issue_number} (HQ)`,source:'Comic Vine HQ'});
+        });
+      }
+    }catch(e){}
+  }
+
+  // Source 2: Marvel API (official, accurate for Marvel)
+  if(isMarvel){
+    try{
+      // Marvel has a public endpoint that sometimes works without key
+      const res=await fetch(`https://gateway.marvel.com/v1/public/comics?titleStartsWith=${encodeURIComponent(title)}&issueNumber=${issue||1}&limit=5&apikey=demo`);
+      if(res.ok){
+        const d=await res.json();
+        (d.data?.results||[]).filter(r=>r.thumbnail&&!r.thumbnail.path.includes('image_not_available')).forEach(r=>{
+          ['portrait_uncanny','portrait_fantastic','detail'].forEach(size=>{
+            results.push({url:`${r.thumbnail.path}/${size}.${r.thumbnail.extension}`,label:`${r.title} (Marvel)`,source:'Marvel Official'});
+          });
+        });
+      }
+    }catch(e){}
+  }
+
+  // Source 3: League of Comic Geeks (great cover database, no CORS issues)
+  try{
+    const lcgRes=await fetch(`https://leagueofcomicgeeks.com/api/search/comics?query=${encodeURIComponent(title+' '+issue)}&format=json`);
+    if(lcgRes.ok){
+      const lcgData=await lcgRes.json();
+      (lcgData.comics||lcgData.results||[]).slice(0,4).forEach(r=>{
+        const img=r.cover_image||r.image||r.cover;
+        if(img) results.push({url:img.startsWith('http')?img:'https://leagueofcomicgeeks.com'+img,label:r.name||title,source:'League of Comic Geeks'});
+      });
+    }
+  }catch(e){}
+
+  // Source 4: Google Books (good for collected editions)
+  try{
+    const gbRes=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent('"'+title+'" comic')}&maxResults=5`);
+    if(gbRes.ok){
+      const gbData=await gbRes.json();
+      (gbData.items||[]).filter(b=>{
+        const t=(b.volumeInfo?.title||'').toLowerCase();
+        return t.includes((title||'').toLowerCase().split(' ')[0])&&b.volumeInfo?.imageLinks;
+      }).forEach(b=>{
+        const links=b.volumeInfo.imageLinks;
+        const best=links.extraLarge||links.large||links.medium||links.thumbnail;
+        if(best) results.push({url:best.replace('zoom=1','zoom=5').replace('http:','https:'),label:b.volumeInfo.title,source:'Google Books'});
+      });
+    }
+  }catch(e){}
+
+  // Source 5: Open Library — title match only
+  try{
+    const olRes=await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(title)}&fields=cover_i,title&limit=5`);
+    if(olRes.ok){
+      const olData=await olRes.json();
+      (olData.docs||[]).filter(d=>d.cover_i&&(d.title||'').toLowerCase().includes((title||'').toLowerCase().split(' ')[0]))
+        .slice(0,3).forEach(d=>{
+          results.push({url:`https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg`,label:d.title,source:'Open Library'});
+        });
+    }
+  }catch(e){}
+
+  return results;
 }
 
 // Smart crop using AI to find comic boundaries, then canvas to crop/enhance
@@ -3299,40 +3389,11 @@ async function searchCoversForFix(id){
   const inputEl=document.getElementById('coverSearchInput');
   const q=(inputEl?.value||c.title).trim();
   const resultsDiv=document.getElementById('coverSearchResults'); if(!resultsDiv) return;
-  resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Searching covers…</div></div>`;
+  resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Searching cover databases…</div></div>`;
 
-  const allResults=[];
-  const issue=cleanIssue(c.issue);
+  const results=await findCoverImages(q, cleanIssue(c.issue), c.publisher, c.variant, null, null, null);
 
-  // Source 1: Google Books — title-only, strict match
-  try{
-    const res=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent('"'+q+'" comic book')}&maxResults=8`);
-    if(res.ok){
-      const d=await res.json();
-      (d.items||[]).forEach(b=>{
-        const t=(b.volumeInfo?.title||'').toLowerCase();
-        if(t.includes(q.toLowerCase().split(' ')[0])&&b.volumeInfo?.imageLinks?.thumbnail){
-          const img=b.volumeInfo.imageLinks.thumbnail.replace('zoom=1','zoom=5').replace('http:','https:');
-          if(!allResults.find(r=>r.url===img))
-            allResults.push({url:img,label:b.volumeInfo.title,source:'Google Books'});
-        }
-      });
-    }
-  }catch(e){}
-
-  // Source 2: Open Library — title search only, strict match
-  try{
-    const res=await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(q)}&fields=cover_i,title&limit=8`);
-    if(res.ok){
-      const d=await res.json();
-      (d.docs||[]).filter(doc=>doc.cover_i&&(doc.title||'').toLowerCase().includes(q.toLowerCase().split(' ')[0]))
-        .slice(0,4).forEach(doc=>{
-          allResults.push({url:`https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`,label:doc.title,source:'Open Library'});
-        });
-    }
-  }catch(e){}
-
-  showCoverResults(id, allResults);
+  showCoverResults(id, results);
 }
 
 function applyCoverFix(id, url){
