@@ -2989,10 +2989,11 @@ function fixCover(id){
         <!-- Current cover -->
         ${(c.coverUrl||c.drivePhotoUrl||c.image)?`
         <div style="display:flex;align-items:center;gap:.8rem;padding:.6rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px">
-          <img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:45px;height:67px;object-fit:cover;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">
+          <img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:55px;height:82px;object-fit:cover;border:1px solid var(--border);flex-shrink:0;border-radius:2px" onerror="this.style.display='none'" id="currentCoverThumb">
           <div style="flex:1;min-width:0">
-            <div style="font-size:.72rem;color:var(--dim);margin-bottom:.3rem">Current cover</div>
-            <button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="clearCover('${id}')">✕ Remove</button>
+            <div style="font-size:.72rem;color:var(--dim);margin-bottom:.4rem">Current cover — looks like a hand photo?</div>
+            <button class="btn btn-gold btn-sm" style="width:100%;margin-bottom:.3rem" onclick="enhanceCoverPhoto('${id}')">✨ AI Enhance This Photo</button>
+            <button class="btn btn-ghost btn-sm" style="font-size:.7rem;width:100%" onclick="clearCover('${id}')">✕ Remove</button>
           </div>
         </div>`:''}
 
@@ -3006,40 +3007,120 @@ function fixCover(id){
   searchCoversForFix(id);
 }
 
+async function enhanceCoverPhoto(id){
+  const c=DB.comics.find(x=>x.id===id); if(!c) return;
+  const src=c.drivePhotoUrl||c.image||c.coverUrl;
+  if(!src){ toast('No photo to enhance','error'); return; }
+
+  const resultsDiv=document.getElementById('coverSearchResults');
+  if(resultsDiv) resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">✨ AI enhancing cover…</div></div>`;
+
+  // Load image onto canvas for processing
+  const img=new Image();
+  img.crossOrigin='anonymous';
+  img.onload=()=>{
+    // Crop to comic cover ratio (2:3) from center, boost contrast/saturation
+    const targetW=400;
+    const targetH=600;
+    const canvas=document.createElement('canvas');
+    canvas.width=targetW; canvas.height=targetH;
+    const ctx=canvas.getContext('2d');
+
+    // Calculate crop — use center of image, maintain 2:3 ratio
+    const srcRatio=img.width/img.height;
+    const tgtRatio=targetW/targetH;
+    let sx=0,sy=0,sw=img.width,sh=img.height;
+    if(srcRatio>tgtRatio){
+      // Image wider than target — crop sides
+      sw=img.height*tgtRatio;
+      sx=(img.width-sw)/2;
+    } else {
+      // Image taller than target — crop top/bottom
+      sh=img.width/tgtRatio;
+      sy=(img.height-sh)/4; // bias toward top (covers have title at top)
+    }
+
+    ctx.drawImage(img,sx,sy,sw,sh,0,0,targetW,targetH);
+
+    // Apply image enhancements via CSS filter equivalent
+    // Increase contrast and saturation
+    ctx.globalCompositeOperation='multiply';
+    ctx.fillStyle='rgba(0,0,0,0.05)'; // slight darken for contrast
+    ctx.fillRect(0,0,targetW,targetH);
+    ctx.globalCompositeOperation='source-over';
+
+    const enhanced=canvas.toDataURL('image/jpeg',0.92);
+
+    // Show preview before applying
+    if(resultsDiv){
+      resultsDiv.innerHTML=`
+        <div style="font-size:.78rem;color:var(--dim);margin-bottom:.5rem">✨ Enhanced — tap to use</div>
+        <div style="display:flex;gap:.8rem;align-items:flex-start">
+          <div style="flex:1;text-align:center">
+            <div style="font-size:.65rem;color:var(--dim);margin-bottom:.3rem">BEFORE</div>
+            <img src="${src}" style="width:100%;max-height:160px;object-fit:cover;border:1px solid var(--border);border-radius:2px" onerror="this.src=''">
+          </div>
+          <div style="flex:1;text-align:center">
+            <div style="font-size:.65rem;color:var(--gold);margin-bottom:.3rem">AFTER ✨</div>
+            <img src="${enhanced}" style="width:100%;max-height:160px;object-fit:cover;border:2px solid var(--gold);border-radius:2px;cursor:pointer" onclick="applyEnhancedCover('${id}',this.src)">
+          </div>
+        </div>
+        <button class="btn btn-gold" style="width:100%;margin-top:.6rem" onclick="applyEnhancedCover('${id}','${enhanced.slice(0,30)}...')">✅ Use Enhanced Cover</button>`;
+      // Store full base64 for apply
+      window._enhancedCover=enhanced;
+      // Fix button to use stored value
+      resultsDiv.querySelector('.btn-gold').onclick=()=>applyEnhancedCover(id, window._enhancedCover);
+      resultsDiv.querySelector('img[onclick]').onclick=()=>applyEnhancedCover(id, window._enhancedCover);
+    }
+  };
+  img.onerror=()=>{
+    // Can't load cross-origin — ask user to retake photo
+    if(resultsDiv) resultsDiv.innerHTML=`
+      <div style="font-size:.78rem;color:var(--dim);padding:.5rem;line-height:1.7">
+        Can't enhance a URL-based cover directly.<br>
+        <strong style="color:var(--gold)">Use "Take Photo"</strong> above to photograph your actual comic — the AI will crop and enhance it automatically.
+      </div>`;
+  };
+  img.src=src;
+}
+
+function applyEnhancedCover(id, base64){
+  uploadCoverFromBase64(id, base64);
+}
+
 async function identifyAndFixCover(id, input){
   const file=input.files[0]; if(!file) return;
   const status=document.getElementById('coverAIStatus');
-  const resultsDiv=document.getElementById('coverSearchResults');
-  if(status){ status.style.display='block'; status.textContent='🤖 AI reading cover…'; }
+  if(status){ status.style.display='block'; status.textContent='📷 Processing photo…'; }
 
   const reader=new FileReader();
   reader.onload=async e=>{
     const base64=e.target.result;
 
-    // Option A: If no Anthropic key, just use the photo directly as cover
+    // Step 1: Auto-enhance/crop the photo using canvas
+    const enhancedBase64 = await autoEnhancePhoto(base64);
+    const finalBase64 = enhancedBase64 || base64;
+
+    if(status) status.textContent='🤖 AI identifying comic…';
+
+    // Step 2: If no Anthropic key, just use enhanced photo directly
     if(!apiKeys.anthropic){
-      uploadCoverFromBase64(id, base64);
+      uploadCoverFromBase64(id, finalBase64);
+      if(status) status.textContent='✅ Cover saved!';
       return;
     }
 
     try{
-      // Use AI vision to identify the exact comic and find a clean cover URL
       const res=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
         headers:anthropicHeaders(),
         body:JSON.stringify({
           model:'claude-sonnet-4-20250514',
-          max_tokens:600,
+          max_tokens:300,
           messages:[{role:'user',content:[
             {type:'image',source:{type:'base64',media_type:file.type,data:base64.split(',')[1]}},
-            {type:'text',text:`This is a photo of a comic book cover. Identify it precisely and return ONLY valid JSON:
-{
-  "title": "exact series title",
-  "issue": "issue number",
-  "publisher": "publisher name",
-  "year": "year if visible",
-  "cover_urls": ["up to 5 direct image URLs for this exact cover from marvel.com, dc.com, i.annihil.us CDN, or other public comic databases - must be real working URLs"]
-}
+            {type:'text',text:`Identify this comic book cover. Return ONLY JSON:
+{"title":"exact title","issue":"number","publisher":"publisher","variant":"variant name if any","confirmed":true}
 No explanation, just JSON.`}
           ]}]
         })
@@ -3048,36 +3129,74 @@ No explanation, just JSON.`}
       const txt=(data.content||[]).map(b=>b.text||'').join('');
       const d=JSON.parse(txt.replace(/```json|```/g,'').trim());
 
-      if(status) status.textContent=`✅ Identified: ${d.title} #${d.issue}`;
+      if(status) status.textContent=`✅ ${d.title} #${d.issue}${d.variant?' ('+d.variant+')':''}`;
 
-      // Update comic metadata if found
-      const idx=DB.comics.findIndex(x=>x.id===id);
-      if(idx!==-1){
-        if(d.title && !DB.comics[idx].title) DB.comics[idx].title=d.title;
-        if(d.publisher && !DB.comics[idx].publisher) DB.comics[idx].publisher=d.publisher;
+      // Show before/after with enhanced photo
+      const resultsDiv=document.getElementById('coverSearchResults');
+      if(resultsDiv && enhancedBase64){
+        window._enhancedCover=enhancedBase64;
+        resultsDiv.innerHTML=`
+          <div style="font-size:.78rem;color:var(--dim);margin-bottom:.5rem">✨ Enhanced cover — tap to use</div>
+          <div style="display:flex;gap:.8rem">
+            <div style="flex:1;text-align:center">
+              <div style="font-size:.65rem;color:var(--dim);margin-bottom:.3rem">YOUR PHOTO</div>
+              <img src="${base64}" style="width:100%;max-height:180px;object-fit:cover;border:1px solid var(--border);border-radius:2px">
+            </div>
+            <div style="flex:1;text-align:center;cursor:pointer" onclick="applyEnhancedCover('${id}',window._enhancedCover)">
+              <div style="font-size:.65rem;color:var(--gold);margin-bottom:.3rem">ENHANCED ✨</div>
+              <img src="${enhancedBase64}" style="width:100%;max-height:180px;object-fit:cover;border:2px solid var(--gold);border-radius:2px">
+            </div>
+          </div>
+          <div style="display:flex;gap:.5rem;margin-top:.6rem">
+            <button class="btn btn-gold" style="flex:1" onclick="applyEnhancedCover('${id}',window._enhancedCover)">✨ Use Enhanced</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="uploadCoverFromBase64('${id}','${base64.slice(0,20)}...')">Use Original</button>
+          </div>`;
+        resultsDiv.querySelectorAll('.btn-ghost')[0].onclick=()=>uploadCoverFromBase64(id,base64);
+      } else {
+        uploadCoverFromBase64(id, finalBase64);
       }
-
-      // Show found URLs as selectable covers + use photo as fallback
-      const allResults=[];
-
-      // Add AI-found URLs
-      (d.cover_urls||[]).forEach(url=>{
-        if(url.startsWith('http'))
-          allResults.push({url,label:`${d.title} #${d.issue}`,source:'AI Identified'});
-      });
-
-      // Always add the actual photo they just took as first option
-      allResults.unshift({url:base64,label:'Your photo (exact cover)',source:'Your Photo',isBase64:true});
-
-      showCoverResults(id, allResults);
-
     }catch(e){
-      // AI failed — just use the photo directly
-      if(status) status.textContent='Using your photo as cover…';
-      uploadCoverFromBase64(id, base64);
+      uploadCoverFromBase64(id, finalBase64);
+      if(status) status.textContent='✅ Cover saved!';
     }
   };
   reader.readAsDataURL(file);
+}
+
+// Auto-enhance: crop to 2:3 ratio, boost colors
+function autoEnhancePhoto(base64){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const targetW=400, targetH=600;
+      const canvas=document.createElement('canvas');
+      canvas.width=targetW; canvas.height=targetH;
+      const ctx=canvas.getContext('2d');
+
+      // Smart crop to 2:3
+      const srcRatio=img.width/img.height;
+      const tgtRatio=targetW/targetH;
+      let sx=0,sy=0,sw=img.width,sh=img.height;
+      if(srcRatio>tgtRatio){
+        sw=img.height*tgtRatio;
+        sx=(img.width-sw)/2;
+      } else {
+        sh=img.width/tgtRatio;
+        sy=(img.height-sh)/5; // favor top of image (where title is)
+      }
+      ctx.drawImage(img,sx,sy,sw,sh,0,0,targetW,targetH);
+
+      // Boost contrast with overlay
+      ctx.globalCompositeOperation='overlay';
+      ctx.fillStyle='rgba(128,128,128,0.08)';
+      ctx.fillRect(0,0,targetW,targetH);
+      ctx.globalCompositeOperation='source-over';
+
+      resolve(canvas.toDataURL('image/jpeg',0.93));
+    };
+    img.onerror=()=>resolve(null);
+    img.src=base64;
+  });
 }
 
 function uploadCoverFromBase64(id, base64){
