@@ -321,7 +321,10 @@ body {
   display:flex;flex-direction:column;align-items:center;justify-content:center;
   gap:7px;opacity:0;transition:opacity .18s;z-index:4;
 }
+/* Desktop hover */
 .comic-card:hover .card-hover{opacity:1;}
+/* Mobile long-press shows actions */
+.comic-card.touched .card-hover{opacity:1;}
 .card-body{padding:.6rem .7rem;}
 .card-title{
   font-family:'Barlow Condensed',sans-serif;font-weight:700;
@@ -2283,7 +2286,12 @@ function renderCollection(){
     const isSel=selected.has(c.id);
     const recCls=c.rec==='hold'?'rec-hold':c.rec==='sell'?'rec-sell':'rec-skip';
     const recTxt=c.rec==='hold'?'📌 Hold':c.rec==='sell'?'🏷️ Sell':'';
-    return `<div class="comic-card${isSel?' sel':''}" onclick="cardClick('${c.id}')" style="${isSel?'outline:2px solid var(--gold)':''}">
+    return `<div class="comic-card${isSel?' sel':''}"
+      onclick="cardClick('${c.id}')"
+      ontouchstart="cardTouchStart(event,'${c.id}')"
+      ontouchend="cardTouchEnd(event,'${c.id}')"
+      ontouchmove="cardTouchCancel()"
+      style="${isSel?'outline:2px solid var(--gold)':''}">
       <div class="card-img">
         ${(c.drivePhotoUrl||c.image||(c.image&&!c.image.startsWith('data:'))||c.coverUrl)?`<img src="${c.drivePhotoUrl||c.image||c.coverUrl}" alt="${c.title}">`:`<div class="card-ph"><span style="font-size:.65rem;font-family:'Barlow Condensed';font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--dim);text-align:center;padding:.5rem">${c.publisher||'?'}</span></div>`}
         ${c.grade?`<div class="grade-pip ${gc(c.grade)}">${c.grade}</div>`:''}
@@ -2409,6 +2417,46 @@ function cardClick(id){
   if(selectMode){ if(selected.has(id)) selected.delete(id); else selected.add(id); renderCollection(); }
   else openDetail(id);
 }
+
+// Long press on mobile — shows action buttons overlay
+let _cardPressTimer=null;
+let _cardPressed=false;
+
+function cardTouchStart(e, id){
+  _cardPressed=false;
+  _cardPressTimer=setTimeout(()=>{
+    _cardPressed=true;
+    // Show action overlay on this card
+    const card=e.currentTarget;
+    // Hide any other open overlays
+    document.querySelectorAll('.comic-card.touched').forEach(c=>{ if(c!==card) c.classList.remove('touched'); });
+    card.classList.toggle('touched');
+    // Haptic feedback if available
+    if(navigator.vibrate) navigator.vibrate(30);
+  }, 400);
+}
+
+function cardTouchEnd(e, id){
+  clearTimeout(_cardPressTimer);
+  if(_cardPressed){
+    // Long press handled — prevent click
+    e.preventDefault();
+    _cardPressed=false;
+  }
+  // If overlay is showing, tapping outside should close it
+}
+
+function cardTouchCancel(){
+  clearTimeout(_cardPressTimer);
+  _cardPressed=false;
+}
+
+// Close any open card overlays when tapping elsewhere
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.comic-card')){
+    document.querySelectorAll('.comic-card.touched').forEach(c=>c.classList.remove('touched'));
+  }
+});
 function deleteComic(id){
   if(!confirm('Remove this comic from your collection?')) return;
   DB.comics=DB.comics.filter(c=>c.id!==id);
@@ -3013,75 +3061,38 @@ async function enhanceCoverPhoto(id){
   if(!src){ toast('No photo to enhance','error'); return; }
 
   const resultsDiv=document.getElementById('coverSearchResults');
-  if(resultsDiv) resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">✨ AI enhancing cover…</div></div>`;
+  if(resultsDiv) resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">✨ AI finding comic edges…</div></div>`;
 
-  // Load image onto canvas for processing
-  const img=new Image();
-  img.crossOrigin='anonymous';
-  img.onload=()=>{
-    // Crop to comic cover ratio (2:3) from center, boost contrast/saturation
-    const targetW=400;
-    const targetH=600;
-    const canvas=document.createElement('canvas');
-    canvas.width=targetW; canvas.height=targetH;
-    const ctx=canvas.getContext('2d');
-
-    // Calculate crop — use center of image, maintain 2:3 ratio
-    const srcRatio=img.width/img.height;
-    const tgtRatio=targetW/targetH;
-    let sx=0,sy=0,sw=img.width,sh=img.height;
-    if(srcRatio>tgtRatio){
-      // Image wider than target — crop sides
-      sw=img.height*tgtRatio;
-      sx=(img.width-sw)/2;
-    } else {
-      // Image taller than target — crop top/bottom
-      sh=img.width/tgtRatio;
-      sy=(img.height-sh)/4; // bias toward top (covers have title at top)
-    }
-
-    ctx.drawImage(img,sx,sy,sw,sh,0,0,targetW,targetH);
-
-    // Apply image enhancements via CSS filter equivalent
-    // Increase contrast and saturation
-    ctx.globalCompositeOperation='multiply';
-    ctx.fillStyle='rgba(0,0,0,0.05)'; // slight darken for contrast
-    ctx.fillRect(0,0,targetW,targetH);
-    ctx.globalCompositeOperation='source-over';
-
-    const enhanced=canvas.toDataURL('image/jpeg',0.92);
-
-    // Show preview before applying
-    if(resultsDiv){
-      resultsDiv.innerHTML=`
-        <div style="font-size:.78rem;color:var(--dim);margin-bottom:.5rem">✨ Enhanced — tap to use</div>
-        <div style="display:flex;gap:.8rem;align-items:flex-start">
-          <div style="flex:1;text-align:center">
-            <div style="font-size:.65rem;color:var(--dim);margin-bottom:.3rem">BEFORE</div>
-            <img src="${src}" style="width:100%;max-height:160px;object-fit:cover;border:1px solid var(--border);border-radius:2px" onerror="this.src=''">
-          </div>
-          <div style="flex:1;text-align:center">
-            <div style="font-size:.65rem;color:var(--gold);margin-bottom:.3rem">AFTER ✨</div>
-            <img src="${enhanced}" style="width:100%;max-height:160px;object-fit:cover;border:2px solid var(--gold);border-radius:2px;cursor:pointer" onclick="applyEnhancedCover('${id}',this.src)">
-          </div>
-        </div>
-        <button class="btn btn-gold" style="width:100%;margin-top:.6rem" onclick="applyEnhancedCover('${id}','${enhanced.slice(0,30)}...')">✅ Use Enhanced Cover</button>`;
-      // Store full base64 for apply
-      window._enhancedCover=enhanced;
-      // Fix button to use stored value
-      resultsDiv.querySelector('.btn-gold').onclick=()=>applyEnhancedCover(id, window._enhancedCover);
-      resultsDiv.querySelector('img[onclick]').onclick=()=>applyEnhancedCover(id, window._enhancedCover);
-    }
-  };
-  img.onerror=()=>{
-    // Can't load cross-origin — ask user to retake photo
+  // Can only enhance base64 images directly (not Drive URLs — CORS blocked)
+  if(src.startsWith('http')){
     if(resultsDiv) resultsDiv.innerHTML=`
-      <div style="font-size:.78rem;color:var(--dim);padding:.5rem;line-height:1.7">
-        Can't enhance a URL-based cover directly.<br>
-        <strong style="color:var(--gold)">Use "Take Photo"</strong> above to photograph your actual comic — the AI will crop and enhance it automatically.
+      <div style="font-size:.78rem;color:var(--dim);padding:.5rem;line-height:1.8">
+        <strong style="color:var(--gold)">To enhance this cover:</strong><br>
+        Tap <strong>📷 Take Photo</strong> above and photograph your actual comic.<br>
+        The AI will automatically find the comic edges and crop it precisely.
       </div>`;
-  };
-  img.src=src;
+    return;
+  }
+
+  const enhanced=await autoEnhancePhoto(src, 'image/jpeg');
+  if(!enhanced){ toast('Enhancement failed','error'); return; }
+
+  window._enhancedCover=enhanced;
+  if(resultsDiv){
+    resultsDiv.innerHTML=`
+      <div style="font-size:.78rem;color:var(--dim);margin-bottom:.5rem">✨ Enhanced — tap to use</div>
+      <div style="display:flex;gap:.8rem">
+        <div style="flex:1;text-align:center">
+          <div style="font-size:.65rem;color:var(--dim);margin-bottom:.3rem">YOUR PHOTO</div>
+          <img src="${src}" style="width:100%;max-height:180px;object-fit:cover;border:1px solid var(--border);border-radius:2px">
+        </div>
+        <div style="flex:1;text-align:center;cursor:pointer" onclick="applyEnhancedCover('${id}',window._enhancedCover)">
+          <div style="font-size:.65rem;color:var(--gold);margin-bottom:.3rem">ENHANCED ✨</div>
+          <img src="${enhanced}" style="width:100%;max-height:180px;object-fit:cover;border:2px solid var(--gold);border-radius:2px">
+        </div>
+      </div>
+      <button class="btn btn-gold" style="width:100%;margin-top:.6rem" onclick="applyEnhancedCover('${id}',window._enhancedCover)">✅ Use Enhanced Cover</button>`;
+  }
 }
 
 function applyEnhancedCover(id, base64){
@@ -3097,8 +3108,8 @@ async function identifyAndFixCover(id, input){
   reader.onload=async e=>{
     const base64=e.target.result;
 
-    // Step 1: Auto-enhance/crop the photo using canvas
-    const enhancedBase64 = await autoEnhancePhoto(base64);
+    // Step 1: Auto-enhance/crop the photo using canvas + AI
+    const enhancedBase64 = await autoEnhancePhoto(base64, file.type);
     const finalBase64 = enhancedBase64 || base64;
 
     if(status) status.textContent='🤖 AI identifying comic…';
@@ -3163,9 +3174,35 @@ No explanation, just JSON.`}
   reader.readAsDataURL(file);
 }
 
-// Auto-enhance: crop to 2:3 ratio, boost colors
-function autoEnhancePhoto(base64){
-  return new Promise(resolve=>{
+// Smart crop using AI to find comic boundaries, then canvas to crop/enhance
+async function autoEnhancePhoto(base64, fileType){
+  return new Promise(async resolve=>{
+    // Step 1: Ask AI where the comic is in the photo
+    let cropGuide=null;
+    if(apiKeys.anthropic){
+      try{
+        const res=await fetch('https://api.anthropic.com/v1/messages',{
+          method:'POST',
+          headers:anthropicHeaders(),
+          body:JSON.stringify({
+            model:'claude-haiku-4-5-20251001',
+            max_tokens:150,
+            messages:[{role:'user',content:[
+              {type:'image',source:{type:'base64',media_type:fileType||'image/jpeg',data:base64.split(',')[1]}},
+              {type:'text',text:`In this photo of a comic book, estimate where the comic cover is as a percentage of the image.
+Return ONLY JSON: {"left":10,"top":5,"right":90,"bottom":95}
+Where values are 0-100 representing percentage from each edge where the comic cover starts/ends.
+No explanation, just JSON.`}
+            ]}]
+          })
+        });
+        const data=await res.json();
+        const txt=(data.content||[]).map(b=>b.text||'').join('');
+        cropGuide=JSON.parse(txt.replace(/```json|```/g,'').trim());
+      }catch(e){}
+    }
+
+    // Step 2: Apply crop using canvas
     const img=new Image();
     img.onload=()=>{
       const targetW=400, targetH=600;
@@ -3173,22 +3210,33 @@ function autoEnhancePhoto(base64){
       canvas.width=targetW; canvas.height=targetH;
       const ctx=canvas.getContext('2d');
 
-      // Smart crop to 2:3
-      const srcRatio=img.width/img.height;
-      const tgtRatio=targetW/targetH;
-      let sx=0,sy=0,sw=img.width,sh=img.height;
-      if(srcRatio>tgtRatio){
-        sw=img.height*tgtRatio;
-        sx=(img.width-sw)/2;
+      let sx,sy,sw,sh;
+      if(cropGuide && cropGuide.left!=null){
+        // Use AI-detected bounds
+        sx=img.width*(cropGuide.left/100);
+        sy=img.height*(cropGuide.top/100);
+        sw=img.width*((cropGuide.right-cropGuide.left)/100);
+        sh=img.height*((cropGuide.bottom-cropGuide.top)/100);
       } else {
-        sh=img.width/tgtRatio;
-        sy=(img.height-sh)/5; // favor top of image (where title is)
+        // Fallback: smart center crop to 2:3
+        const srcRatio=img.width/img.height;
+        const tgtRatio=targetW/targetH;
+        sx=0; sy=0; sw=img.width; sh=img.height;
+        if(srcRatio>tgtRatio){
+          sw=img.height*tgtRatio;
+          sx=(img.width-sw)/2;
+        } else {
+          sh=img.width/tgtRatio;
+          sy=(img.height-sh)/5;
+        }
       }
-      ctx.drawImage(img,sx,sy,sw,sh,0,0,targetW,targetH);
 
-      // Boost contrast with overlay
+      // Draw cropped region scaled to target size
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+      // Slight contrast boost
       ctx.globalCompositeOperation='overlay';
-      ctx.fillStyle='rgba(128,128,128,0.08)';
+      ctx.fillStyle='rgba(128,128,128,0.06)';
       ctx.fillRect(0,0,targetW,targetH);
       ctx.globalCompositeOperation='source-over';
 
