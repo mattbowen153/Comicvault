@@ -356,6 +356,7 @@ body {
 .card-meta{display:flex;justify-content:space-between;align-items:center;margin-top:3px;}
 .card-iss{font-size:.7rem;color:var(--dim);}
 .card-price{font-family:'Bebas Neue',cursive;font-size:.95rem;color:var(--gold);letter-spacing:1px;}
+.stale-price{color:rgba(255,149,0,.7)!important;}
 .card-rec{
   font-size:.6rem;letter-spacing:1px;text-transform:uppercase;
   padding:2px 6px;margin-top:4px;display:inline-block;
@@ -1199,16 +1200,43 @@ body {
 
       <!-- ══ REPORTS PAGE ══ -->
       <div class="page" id="page-reports">
-        <div class="card-grid-2 mb-md">
-          <div class="stat-card"><div class="stat-val text-gold" id="rp-comics">0</div><div class="stat-lbl">Total Comics</div></div>
-          <div class="stat-card"><div class="stat-val" style="color:var(--green)" id="rp-value">$0</div><div class="stat-lbl">Collection Value</div></div>
-          <div class="stat-card"><div class="stat-val" style="color:var(--blue)" id="rp-sold-n">0</div><div class="stat-lbl">Items Sold</div></div>
-          <div class="stat-card"><div class="stat-val text-accent" id="rp-roi">0%</div><div class="stat-lbl">Est. ROI</div></div>
+        <!-- Value Dashboard -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin-bottom:.8rem">
+          <div class="stat-card"><div class="stat-val text-gold" id="rp-comics">0</div><div class="stat-lbl">Comics Owned</div></div>
+          <div class="stat-card"><div class="stat-val" style="color:var(--green)" id="rp-value">$0</div><div class="stat-lbl">Est. Value</div></div>
+          <div class="stat-card"><div class="stat-val" style="color:var(--blue)" id="rp-invested">$0</div><div class="stat-lbl">Invested</div></div>
+          <div class="stat-card"><div class="stat-val" id="rp-roi" style="color:var(--green)">0%</div><div class="stat-lbl">Paper ROI</div></div>
         </div>
-        <div class="info-box mb-md">Top publishers, best grades, and selling velocity will appear here as you build your collection and sales history.</div>
-        <div class="sec-title mb-md">Top 5 Most Valuable</div>
-        <div id="topValueList"></div>
-        <div class="sec-title mt-lg mb-md">Recent Sales</div>
+
+        <!-- Profit summary bar -->
+        <div id="rp-profitBar" style="display:none;margin-bottom:.8rem;padding:.8rem 1rem;background:var(--panel);border:1px solid var(--border);border-radius:4px">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.78rem;letter-spacing:1.5px;color:var(--dim);margin-bottom:.5rem">SELLING PERFORMANCE</div>
+          <div style="display:flex;gap:1rem;flex-wrap:wrap">
+            <div><div style="font-size:.7rem;color:var(--dim)">Total Sold</div><div style="font-family:'Bebas Neue';font-size:1.3rem;color:var(--paper)" id="rp-sold-n">0</div></div>
+            <div><div style="font-size:.7rem;color:var(--dim)">Revenue</div><div style="font-family:'Bebas Neue';font-size:1.3rem;color:var(--green)" id="rp-revenue">$0</div></div>
+            <div><div style="font-size:.7rem;color:var(--dim)">Net Profit</div><div style="font-family:'Bebas Neue';font-size:1.3rem;" id="rp-profit">$0</div></div>
+            <div><div style="font-size:.7rem;color:var(--dim)">Avg Sale</div><div style="font-family:'Bebas Neue';font-size:1.3rem;color:var(--paper)" id="rp-avgsale">$0</div></div>
+          </div>
+        </div>
+
+        <!-- Price aging alerts -->
+        <div id="rp-agingAlert" style="display:none;margin-bottom:.8rem"></div>
+
+        <!-- Publisher breakdown -->
+        <div style="margin-bottom:.8rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.78rem;letter-spacing:1.5px;color:var(--dim);margin-bottom:.5rem">BY PUBLISHER</div>
+          <div id="rp-publishers"></div>
+        </div>
+
+        <!-- Top 5 most valuable -->
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.78rem;letter-spacing:1.5px;color:var(--dim);margin-bottom:.5rem">TOP 5 MOST VALUABLE</div>
+        <div id="topValueList" style="margin-bottom:.8rem"></div>
+
+        <!-- Stale pricing -->
+        <div id="rp-stale" style="margin-bottom:.8rem"></div>
+
+        <!-- Recent sales -->
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.78rem;letter-spacing:1.5px;color:var(--dim);margin-bottom:.5rem">RECENT SALES</div>
         <div id="recentSalesList"></div>
       </div>
 
@@ -2167,6 +2195,57 @@ function checkForRecovery(){
   }
 }
 
+function checkWantListAlerts(){
+  if(!DB.wantList?.length) return;
+  // Only show once per day
+  const today=new Date().toISOString().slice(0,10);
+  const lastCheck=localStorage.getItem('cvp_wantcheck');
+  if(lastCheck===today) return;
+  localStorage.setItem('cvp_wantcheck', today);
+
+  const want=DB.wantList.filter(w=>w.title);
+  if(!want.length) return;
+
+  // Build a dismissable banner
+  const existing=document.getElementById('wantAlertBanner');
+  if(existing) existing.remove();
+
+  const banner=document.createElement('div');
+  banner.id='wantAlertBanner';
+  banner.style.cssText='position:fixed;bottom:calc(var(--bottom-nav-h) + 8px);left:8px;right:8px;background:var(--ink2);border:1px solid rgba(255,214,10,.35);border-radius:8px;padding:.8rem 1rem;z-index:900;box-shadow:0 4px 20px rgba(0,0,0,.5)';
+
+  // Pick up to 3 want list items to highlight
+  const highlight=want.slice(0,3);
+  const enc=encodeURIComponent;
+
+  banner.innerHTML=`
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem">
+      <div style="flex:1">
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);margin-bottom:.3rem">
+          🎯 ${want.length} comic${want.length!==1?'s':''} on your Want List
+        </div>
+        <div style="font-size:.73rem;color:var(--dim);margin-bottom:.5rem">Check prices on eBay before you hunt today:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:.3rem">
+          ${highlight.map(w=>`
+            <a href="https://www.ebay.com/sch/i.html?_nkw=${enc((w.title||'')+(w.issue?' %23'+w.issue:'')+' comic')}&LH_Sold=1&LH_Complete=1"
+               target="_blank"
+               style="font-size:.72rem;padding:.25rem .55rem;background:rgba(255,214,10,.1);border:1px solid rgba(255,214,10,.25);border-radius:4px;color:var(--gold);text-decoration:none;display:flex;align-items:center;gap:.3rem">
+              ${w.title}${w.issue?' #'+w.issue:''} <span style="opacity:.6">↗</span>
+            </a>`).join('')}
+          ${want.length>3?`<span style="font-size:.72rem;color:var(--dim);padding:.25rem 0">+${want.length-3} more</span>`:''}
+        </div>
+      </div>
+      <button onclick="document.getElementById('wantAlertBanner').remove()" style="background:none;border:none;color:var(--dim);font-size:1.1rem;cursor:pointer;flex-shrink:0;padding:.2rem">✕</button>
+    </div>
+    <div style="margin-top:.5rem;display:flex;gap:.4rem">
+      <button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="nav(document.querySelector('[data-page=missing]'));document.getElementById('wantAlertBanner').remove()">📋 View Full Want List</button>
+    </div>`;
+
+  document.body.appendChild(banner);
+  // Auto-dismiss after 12 seconds
+  setTimeout(()=>banner.remove(), 12000);
+}
+
 function restoreAutoBackup(){
   const sources=['cvp2_backup','cvp2_snap'];
   for(const key of sources){
@@ -2230,6 +2309,7 @@ loadDB();
 })();
 
 setTimeout(checkForRecovery, 600);
+setTimeout(checkWantListAlerts, 2500);
 
 // ── ANDROID FIXES ──────────────────────────────────────────
 (function androidFixes(){
@@ -2379,11 +2459,15 @@ function renderCollection(){
   updateStats();
   if(!list.length){ grid.innerHTML=''; empty.style.display='block'; return; }
   empty.style.display='none';
+  const now=Date.now();
+  const NINETY=90*24*60*60*1000;
   grid.innerHTML=list.map(c=>{
     const isListed=DB.listings.some(l=>l.comicId===c.id&&l.status==='active');
     const isSel=selected.has(c.id);
     const recCls=c.rec==='hold'?'rec-hold':c.rec==='sell'?'rec-sell':'rec-skip';
     const recTxt=c.rec==='hold'?'📌 Hold':c.rec==='sell'?'🏷️ Sell':'';
+    // Price aging — show clock if price set but 90+ days old
+    const priceAge=c.price&&parseFloat(c.price)>0&&c.addedAt&&(now-new Date(c.addedAt).getTime())>NINETY;
     return `<div class="comic-card${isSel?' sel':''}"
       onclick="cardClick('${c.id}')"
       ontouchstart="cardTouchStart(event,'${c.id}')"
@@ -2393,6 +2477,7 @@ function renderCollection(){
       <div class="card-img">
         ${(c.drivePhotoUrl||c.image||(c.image&&!c.image.startsWith('data:'))||c.coverUrl)?`<img src="${c.drivePhotoUrl||c.image||c.coverUrl}" alt="${c.title}">`:`<div class="card-ph"><span style="font-size:.65rem;font-family:'Barlow Condensed';font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--dim);text-align:center;padding:.5rem">${c.publisher||'?'}</span></div>`}
         ${c.grade?`<div class="grade-pip ${gc(c.grade)}">${c.grade}</div>`:''}
+        ${priceAge?`<div title="Price may be outdated" style="position:absolute;top:4px;right:4px;background:rgba(255,149,0,.85);color:#000;font-size:.55rem;font-weight:700;padding:1px 4px;border-radius:3px;line-height:1.4">⏰</div>`:''}
         ${isListed?'<div class="sale-ribbon">For Sale</div>':c.rec==='hold'?'<div class="hold-ribbon">Hold</div>':''}
         ${!selectMode?`<div class="card-hover">
           <button class="btn btn-primary btn-sm" onclick="event.stopPropagation();openEdit('${c.id}')">✏️ Edit</button>
@@ -2405,7 +2490,7 @@ function renderCollection(){
         <div class="card-title">${c.title||'Untitled'}</div>
         <div class="card-meta">
           <span class="card-iss">#${cleanIssue(c.issue)}${c.volume?' Vol.'+c.volume:''}${c.year?' ('+c.year+')':''}</span>
-          <span class="card-price">${c.price?'$'+parseFloat(c.price).toFixed(0):''}</span>
+          <span class="card-price${priceAge?' stale-price':''}">${c.price?'$'+parseFloat(c.price).toFixed(0):''}</span>
         </div>
         ${c.releaseDate?`<div style="font-size:.7rem;color:var(--dim);margin-top:1px">${c.releaseDate}</div>`:''}
         ${recTxt?`<span class="card-rec ${recCls}">${recTxt}</span>`:''}
@@ -3376,27 +3461,27 @@ function showCropLoading(){
 function hideCropLoading(){ document.getElementById('cropLoading')?.remove(); }
 
 async function aiDetectCropArea(base64, mimeType){
-  // Default crop (full image with small padding)
-  const def={left:5,top:5,right:95,bottom:95};
+  const def={x1:5,y1:5,x2:95,y2:95}; // % from top-left
   if(!apiKeys.anthropic) return def;
   try{
     const res=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST', headers:anthropicHeaders(),
       body:JSON.stringify({
-        model:'claude-haiku-4-5-20251001', max_tokens:80,
+        model:'claude-haiku-4-5-20251001', max_tokens:60,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
-          {type:'text',text:`Find the comic book cover in this photo. Give me the bounding box as percentages from each edge.
-Return ONLY JSON: {"left":8,"top":5,"right":92,"bottom":95}
-Values are % from that edge where the comic starts. Be precise — cut out background, hands, carpet, table.`}
+          {type:'text',text:`Find the comic book cover rectangle in this photo.
+Return ONLY JSON with percentages from the TOP-LEFT corner of the image:
+{"x1":10,"y1":5,"x2":88,"y2":95}
+x1=left edge %, y1=top edge %, x2=right edge %, y2=bottom edge %.
+Cut out background, floor, hands. Be tight to the comic edges.`}
         ]}]
       })
     });
     const data=await res.json();
     const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
-    const parsed=JSON.parse(txt.replace(/```json|```/g,'').trim());
-    // Validate
-    if(typeof parsed.left==='number'&&parsed.left>=0&&parsed.right<=100) return parsed;
+    const p=JSON.parse(txt.replace(/```json|```/g,'').trim());
+    if(typeof p.x1==='number'&&typeof p.x2==='number'&&p.x1<p.x2&&p.y1<p.y2) return p;
     return def;
   }catch(e){ return def; }
 }
@@ -3404,7 +3489,6 @@ Values are % from that edge where the comic starts. Be precise — cut out backg
 function showCropperModal(id, src, aiCrop){
   const existing=document.getElementById('cropperModal');
   if(existing) existing.remove();
-
   const modal=document.createElement('div');
   modal.id='cropperModal';
   modal.style.cssText='position:fixed;inset:0;background:#000;z-index:10000;display:flex;flex-direction:column';
@@ -3425,8 +3509,7 @@ function showCropperModal(id, src, aiCrop){
       <button onclick="cropperApply('${id}')" style="flex:1;background:#ffd60a;border:none;color:#000;padding:.7rem;border-radius:4px;font-weight:700;font-size:.95rem;cursor:pointer">✅ Use This Cover</button>
     </div>`;
   document.body.appendChild(modal);
-
-  _cropState={pts:null,drag:null,imgRot:0,origSrc:src,aiCrop:aiCrop||{left:5,top:5,right:95,bottom:95}};
+  _cropState={pts:null,drag:null,imgRot:0,origSrc:src,aiCrop:aiCrop||{x1:5,y1:5,x2:95,y2:95}};
   const img=document.getElementById('cropperImg');
   img.onload=()=>initCropperWithAI();
   if(img.complete) initCropperWithAI();
@@ -3439,35 +3522,24 @@ function initCropperWithAI(){
   const img=document.getElementById('cropperImg');
   if(!area||!img) return;
   const aw=area.clientWidth, ah=area.clientHeight;
+
+  // Calculate where the image actually renders inside the contain box
   const iRatio=img.naturalWidth/img.naturalHeight;
   const aRatio=aw/ah;
   let iw,ih,ix,iy;
   if(iRatio>aRatio){ iw=aw; ih=aw/iRatio; }
   else { ih=ah; iw=ah*iRatio; }
   ix=(aw-iw)/2; iy=(ah-ih)/2;
-
-  const c=_cropState.aiCrop||{left:5,top:5,right:95,bottom:95};
-  // Convert AI percentage crop to screen pixels
-  _cropState.pts=[
-    {x:ix+iw*(c.left/100),   y:iy+ih*(c.top/100)},
-    {x:ix+iw*(1-c.right/100+c.left/100+(c.right-c.left)/100), y:iy+ih*(c.top/100)},
-    {x:ix+iw*(1-c.right/100+c.left/100+(c.right-c.left)/100), y:iy+ih*(1-c.bottom/100+c.top/100+(c.bottom-c.top)/100)},
-    {x:ix+iw*(c.left/100),   y:iy+ih*(1-c.bottom/100+c.top/100+(c.bottom-c.top)/100)},
-  ];
-  // Simpler: just use direct percentage of rendered image
-  _cropState.pts=[
-    {x:ix+iw*(c.left/100),        y:iy+ih*(c.top/100)},
-    {x:ix+iw*((100-c.right)/100+c.left/100+(c.right-c.left)/100), y:iy+ih*(c.top/100)},
-    {x:ix+iw*((100-c.right)/100+c.left/100+(c.right-c.left)/100), y:iy+ih*((100-c.bottom)/100+c.top/100+(c.bottom-c.top)/100)},
-    {x:ix+iw*(c.left/100),        y:iy+ih*((100-c.bottom)/100+c.top/100+(c.bottom-c.top)/100)},
-  ];
-  // Even simpler and correct:
   _cropState.imgRect={ix,iy,iw,ih};
+
+  // AI gives x1,y1,x2,y2 as % of image from top-left
+  const c=_cropState.aiCrop||{x1:5,y1:5,x2:95,y2:95};
+  // Convert to screen pixels
   _cropState.pts=[
-    {x:ix+iw*c.left/100,         y:iy+ih*c.top/100},
-    {x:ix+iw*(c.right/100),      y:iy+ih*c.top/100},
-    {x:ix+iw*(c.right/100),      y:iy+ih*(c.bottom/100)},
-    {x:ix+iw*c.left/100,         y:iy+ih*(c.bottom/100)},
+    {x:ix+iw*(c.x1/100), y:iy+ih*(c.y1/100)}, // top-left
+    {x:ix+iw*(c.x2/100), y:iy+ih*(c.y1/100)}, // top-right
+    {x:ix+iw*(c.x2/100), y:iy+ih*(c.y2/100)}, // bottom-right
+    {x:ix+iw*(c.x1/100), y:iy+ih*(c.y2/100)}, // bottom-left
   ];
   renderCropper();
   bindCropperEvents();
@@ -4047,40 +4119,41 @@ function saveAndList(){ saveComic(true); }
 
 function buildGradePrompt(title, issue, publisher, variant, collectionContext, year){
   const ctx = collectionContext||0;
-  return `You are a senior CGC-certified comic book grader and market analyst with 20 years experience. You have deep knowledge of current eBay sold listings, GoCollect data, and Heritage Auctions results.
+  return `You are a senior comic book grader and market analyst. Analyze this comic and provide honest pricing.
 
-Analyze this comic: "${title}" #${cleanIssue(issue)}${year?' ('+year+')':''}${publisher?' by '+publisher:''}${variant?' ['+variant+']':''}.
-Collector context: They own ${ctx} comic(s) from this publisher/series.
+Comic: "${title}" #${cleanIssue(issue)}${year?' ('+year+')':''}${publisher?' by '+publisher:''}${variant?' ['+variant+']':''}.
+Collector owns ${ctx} comic(s) from this publisher/series.
 
-CRITICAL PRICING RULES — do NOT use generic placeholder prices:
-- Base ALL prices on realistic recent sold listings (last 90 days)
-- Common issues (print run over 100k) in VF: typically $3-15 UNLESS key issue
+HONEST PRICING RULES:
+- You do NOT have real-time sales data — base prices on era, key status, and known collector demand
+- Common issues (print run over 100k): VF typically $2-15 UNLESS key
 - Bronze Age (1970-1985) commons: $4-25, keys: $50-5000+
 - Silver Age (1956-1969) commons: $15-100, keys: $200-50000+
 - Copper Age (1985-1990) commons: $3-20, keys: $25-500
 - Modern Age (1990+) commons: $1-8, keys: $15-200
-- Newsstand variants: 20-50% premium over direct edition
-- If NOT a key issue, price honestly (often $3-12)
-- Never default to $8/$15/$25 — give real market-based numbers
+- Newsstand variants: 20-50% premium
+- If NOT a key issue, price honestly — most comics are worth $2-12
+- Never invent fake precision — give honest ranges
 
-SELL STRATEGY RULES:
-- Individual sale: best when price_mid is $15+ and recognizable title
-- Bulk/lot sale: best when price_mid under $10, common issue, hard to move alone
+SELL STRATEGY:
+- Individual: best when price_mid $15+ and recognizable
+- Lot/bundle: best when price_mid under $10 or common issue
 
-Respond ONLY with valid JSON (no markdown, no backticks):
+Respond ONLY with valid JSON (no markdown):
 {
 "grade":"VF","score":8.0,"grade_label":"Very Fine",
-"condition_summary":"2-3 sentences about condition",
-"positive_factors":["White pages","Strong spine"],"negative_factors":["Minor stress"],
-"price_low":45,"price_mid":65,"price_high":95,
-"price_confidence":"medium","price_basis":"Recent eBay sold listings",
-"cgc_98_estimate":250,"recommendation":"sell","rec_label":"Sell — Good Market Now",
-"rec_reason":"2-3 sentences with market reasoning","is_key_issue":true,
-"key_notes":"First appearance of Venom","market_trend":"rising",
-"sell_strategy":"individual","sell_strategy_reason":"Reason for strategy",
-"best_platform":"eBay BIN","best_platform_reason":"Why this platform",
-"bundle_with":"What to bundle with if needed","time_to_sell":"1-3 weeks",
-"avoid":"Platforms or strategies to avoid"
+"condition_summary":"2-3 sentences about typical condition for this era/issue",
+"positive_factors":["Strong spine","Clean cover"],"negative_factors":["Minor spine stress common for era"],
+"price_low":5,"price_mid":12,"price_high":25,
+"price_confidence":"low|medium|high",
+"price_basis":"Era-based estimate — verify on eBay sold listings",
+"cgc_98_estimate":45,"recommendation":"sell","rec_label":"Sell — Good Market Now",
+"rec_reason":"2-3 sentences with honest market reasoning","is_key_issue":false,
+"key_notes":"Common issue, no major significance","market_trend":"stable",
+"sell_strategy":"lot","sell_strategy_reason":"Common issue sells better bundled",
+"best_platform":"eBay","best_platform_reason":"Most traffic for this type",
+"bundle_with":"Similar era/publisher comics","time_to_sell":"Variable",
+"avoid":"Pricing too high for a common issue"
 }`;
 }
 
@@ -4137,6 +4210,9 @@ async function runGrade(){
         ${d.market_trend==='rising'?'📈 Market trending up':d.market_trend==='cooling'?'📉 Market cooling — consider selling':'➡️ Market stable'}
         ${d.best_platform?' · Best platform: <strong>'+d.best_platform+'</strong>':''}
       </div>`:''}
+      <div style="margin-top:.4rem;padding:.4rem .5rem;background:rgba(255,100,0,.06);border:1px solid rgba(255,100,0,.2);border-radius:3px;font-size:.7rem;color:var(--dim)">
+        ⚠ AI estimate — verify on <a href="https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent((title||'')+' '+(cleanIssue(issue)||'')+' comic')}&LH_Sold=1&LH_Complete=1" target="_blank" style="color:var(--blue)">eBay Sold Listings</a> or <a href="https://gocollect.com" target="_blank" style="color:var(--blue)">GoCollect</a> before selling
+      </div>
       ${d.is_key_issue?`<div style="margin-top:.8rem;padding:.5rem .8rem;background:rgba(255,214,10,.07);border:1px solid rgba(255,214,10,.2);font-size:.78rem;color:var(--gold)">🔑 KEY ISSUE: ${d.key_notes}</div>`:''}
       <div class="rec-card" style="margin-top:1rem;margin-bottom:0;border-left:3px solid ${recColor}">
         <div class="rec-header"><div class="rec-verdict" style="color:${recColor}">${d.rec_label}</div></div>
@@ -4329,44 +4405,121 @@ function saveBundles(){ try{ localStorage.setItem('cvp_bundles',JSON.stringify(b
 function renderBundleList(){
   const div=document.getElementById('bundleList'); if(!div) return;
 
-  // Smart auto-grouping — find series with 2+ issues
+  // ── SMART SERIES ANALYSIS ─────────────────────────────────
+  // Group by title, analyze run completeness and value
   const seriesMap={};
   DB.comics.forEach(c=>{
-    const key=c.title.toLowerCase();
-    if(!seriesMap[key]) seriesMap[key]={title:c.title,publisher:c.publisher,comics:[]};
+    const key=(c.title||'').toLowerCase().trim();
+    if(!key) return;
+    if(!seriesMap[key]) seriesMap[key]={
+      title:c.title, publisher:c.publisher||'', comics:[], issues:new Set()
+    };
     seriesMap[key].comics.push(c);
+    seriesMap[key].issues.add(parseInt(cleanIssue(c.issue))||0);
   });
-  const bundleable=Object.values(seriesMap).filter(s=>s.comics.length>=2);
-  // Find which ones aren't already in a bundle
-  const bundledTitles=new Set(bundles.flatMap(b=>b.comicIds.map(id=>DB.comics.find(c=>c.id===id)?.title?.toLowerCase()).filter(Boolean)));
-  const suggestions=bundleable.filter(s=>!bundledTitles.has(s.title.toLowerCase())).slice(0,3);
+
+  // Build smart suggestions for each series with 2+ issues
+  const seriesAnalysis=Object.values(seriesMap)
+    .filter(s=>s.comics.length>=2)
+    .map(s=>{
+      const issues=[...s.issues].sort((a,b)=>a-b);
+      const minIssue=issues[0], maxIssue=issues[issues.length-1];
+      const owned=issues.length;
+      const span=maxIssue-minIssue+1; // total range
+      const gaps=[];
+      for(let i=minIssue;i<=maxIssue;i++){
+        if(!s.issues.has(i)) gaps.push(i);
+      }
+      const runPct=span>0?Math.round((owned/span)*100):100;
+      const indivTotal=s.comics.reduce((t,c)=>t+(parseFloat(c.price)||0),0);
+      const avgPrice=indivTotal/owned;
+
+      // Collect-vs-sell logic
+      let advice, adviceColor, adviceIcon;
+      if(runPct>=80&&gaps.length<=3){
+        advice=`You have ${runPct}% of this run (#${minIssue}–#${maxIssue}). ${gaps.length>0?'Only missing #'+gaps.join(', ')+'.':''} Completing this run could significantly increase bundle value — run collectors pay a premium for complete sets.`;
+        adviceColor='var(--green)'; adviceIcon='📈 KEEP COLLECTING';
+      } else if(runPct<50&&avgPrice<10&&owned>=3){
+        advice=`You own ${owned} scattered issues across a ${span}-issue range at ~$${avgPrice.toFixed(0)} each. Completing this run would require buying ${gaps.length} more issues. At these prices, bundle now and sell — the math doesn't favor completing the run.`;
+        adviceColor='var(--accent2)'; adviceIcon='📦 SELL AS LOT';
+      } else if(owned>=5&&runPct>=60){
+        advice=`Solid ${runPct}% run. Missing ${gaps.length} issues (#${gaps.slice(0,5).join(', ')}${gaps.length>5?' +more':''}). If those missing issues are affordable (<$15 each), completing the run is worth it. Otherwise bundle what you have.`;
+        adviceColor='var(--gold)'; adviceIcon='⚖️ YOUR CALL';
+      } else {
+        advice=`${owned} issues owned. As a partial run these sell better bundled than individually — lot buyers value quantity over completeness at this level.`;
+        adviceColor='var(--gold)'; adviceIcon='📦 BUNDLE RECOMMENDED';
+      }
+
+      const alreadyBundled=bundles.some(b=>b.comicIds.some(id=>s.comics.find(c=>c.id===id)));
+
+      return {
+        ...s, issues, minIssue, maxIssue, owned, span, gaps, runPct,
+        indivTotal, avgPrice, advice, adviceColor, adviceIcon, alreadyBundled
+      };
+    })
+    .sort((a,b)=>{
+      // Prioritize: complete runs first, then high value, then partial
+      const scoreA=(a.runPct/100)*3+(a.indivTotal>50?2:0)+(a.owned>5?1:0);
+      const scoreB=(b.runPct/100)*3+(b.indivTotal>50?2:0)+(b.owned>5?1:0);
+      return scoreB-scoreA;
+    });
 
   let suggestHtml='';
-  if(suggestions.length){
+  if(seriesAnalysis.length){
     suggestHtml=`
-      <div style="margin-bottom:1rem;padding:.8rem 1rem;background:rgba(255,214,10,.05);border:1px solid rgba(255,214,10,.2);border-radius:4px">
-        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);letter-spacing:.5px;margin-bottom:.5rem">💡 SUGGESTED BUNDLES FROM YOUR COLLECTION</div>
-        ${suggestions.map(s=>{
-          const total=s.comics.reduce((sum,c)=>sum+(parseFloat(c.price)||0),0);
-          const ids=s.comics.map(c=>c.id);
+      <div style="margin-bottom:1rem">
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);letter-spacing:1px;margin-bottom:.6rem">📊 YOUR SERIES — COLLECT OR SELL?</div>
+        ${seriesAnalysis.map(s=>{
           const safeTitle=s.title.replace(/'/g,"\\'");
-          return `<div style="display:flex;align-items:center;gap:.8rem;padding:.5rem 0;border-bottom:1px solid rgba(255,255,255,.05)">
-            <div style="flex:1">
-              <div style="font-size:.82rem;font-weight:600;color:var(--paper)">${s.title}</div>
-              <div style="font-size:.72rem;color:var(--dim)">${s.comics.length} issues · ${s.publisher||'?'} · individual value $${total.toFixed(0)}</div>
-              <div style="font-size:.7rem;color:var(--dim);margin-top:.1rem">${s.comics.map(c=>'#'+cleanIssue(c.issue)).join(', ')}</div>
+          const ids=JSON.stringify(s.comics.map(c=>c.id));
+          const issueList=s.comics.map(c=>'#'+cleanIssue(c.issue)).join(', ');
+          return `
+          <div style="background:var(--panel);border:1px solid var(--border);border-left:3px solid ${s.adviceColor};border-radius:4px;padding:.8rem;margin-bottom:.6rem">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:.5rem;margin-bottom:.4rem;flex-wrap:wrap">
+              <div>
+                <div style="font-size:.85rem;font-weight:700;color:var(--paper)">${s.title}</div>
+                <div style="font-size:.7rem;color:var(--dim)">${s.publisher||'Unknown publisher'}</div>
+              </div>
+              <span style="font-size:.65rem;font-weight:700;color:${s.adviceColor};background:rgba(255,255,255,.06);padding:.2rem .5rem;border-radius:3px;white-space:nowrap">${s.adviceIcon}</span>
             </div>
-            <button class="btn btn-gold btn-sm" onclick="quickCreateBundle('${safeTitle}','${s.publisher||''}',${JSON.stringify(ids)})">+ Bundle</button>
+
+            <!-- Run stats bar -->
+            <div style="margin-bottom:.5rem">
+              <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--dim);margin-bottom:.2rem">
+                <span>Run #${s.minIssue}–#${s.maxIssue} · You own ${s.owned}/${s.span} issues (${s.runPct}%)</span>
+                <span style="color:var(--gold)">$${s.indivTotal.toFixed(0)} total</span>
+              </div>
+              <div style="height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden">
+                <div style="height:100%;width:${s.runPct}%;background:${s.adviceColor};border-radius:2px;transition:width .3s"></div>
+              </div>
+              ${s.gaps.length?`<div style="font-size:.66rem;color:var(--dim);margin-top:.2rem">Missing: #${s.gaps.slice(0,8).join(', ')}${s.gaps.length>8?' +'+( s.gaps.length-8)+' more':''}</div>`:'<div style="font-size:.66rem;color:var(--green);margin-top:.2rem">✅ Complete run!</div>'}
+            </div>
+
+            <!-- Advice -->
+            <div style="font-size:.74rem;color:var(--paper2);line-height:1.5;margin-bottom:.5rem;padding:.4rem .5rem;background:rgba(255,255,255,.03);border-radius:3px">${s.advice}</div>
+
+            <!-- Issues owned -->
+            <div style="font-size:.68rem;color:var(--dim);margin-bottom:.5rem">${issueList}</div>
+
+            <!-- Actions -->
+            <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+              ${!s.alreadyBundled?`<button class="btn btn-gold btn-sm" onclick="quickCreateBundle('${safeTitle}','${s.publisher||''}',${ids})">📦 Create Bundle</button>`:'<span style="font-size:.7rem;color:var(--green);padding:.3rem 0">✅ Already bundled</span>'}
+              ${s.gaps.length&&s.gaps.length<=10?`<button class="btn btn-ghost btn-sm" onclick="addMissingToWantList('${safeTitle}','${s.publisher||''}',${JSON.stringify(s.gaps)})">🎯 Add Missing to Want List</button>`:''}
+              <button class="btn btn-ghost btn-sm" onclick="analyzeSeriesAI('${safeTitle}','${s.publisher||''}',${s.owned},${s.runPct},${s.indivTotal.toFixed(0)},${s.gaps.length})">🤖 AI Deep Analysis</button>
+            </div>
           </div>`;
         }).join('')}
       </div>`;
   }
 
   if(!bundles.length){
-    div.innerHTML=suggestHtml+`<div class="empty-state"><div class="empty-icon">📦</div><div class="empty-txt">No bundles yet — tap + New Bundle or use a suggestion above</div></div>`;
+    div.innerHTML=suggestHtml+(!seriesAnalysis.length?`<div class="empty-state"><div class="empty-icon">📦</div><div class="empty-txt">Add more comics to see bundle suggestions</div></div>`:'');
     return;
   }
-  div.innerHTML=suggestHtml+bundles.map(b=>{
+
+  div.innerHTML=suggestHtml+`
+    <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);letter-spacing:1px;margin-bottom:.6rem">📦 YOUR BUNDLES</div>`+
+  bundles.map(b=>{
     const comics=b.comicIds.map(id=>DB.comics.find(c=>c.id===id)).filter(Boolean);
     const totalVal=comics.reduce((s,c)=>s+(parseFloat(c.price)||0),0);
     const publishers=[...new Set(comics.map(c=>c.publisher).filter(Boolean))];
@@ -4378,7 +4531,7 @@ function renderBundleList(){
         </div>
         <div style="text-align:right;flex-shrink:0">
           <div style="font-family:'Bebas Neue';font-size:1.4rem;color:var(--gold);line-height:1">$${totalVal.toFixed(0)}</div>
-          <div style="font-size:.62rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase">individual val</div>
+          <div style="font-size:.62rem;color:var(--dim);text-transform:uppercase">individual val</div>
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:.3rem;margin-bottom:.7rem">
@@ -4389,13 +4542,96 @@ function renderBundleList(){
         💰 <strong style="color:var(--gold)">Bundle estimate: ${b.aiEstimate}</strong>${b.aiPlatform?' · '+b.aiPlatform:''}
       </div>`:''}
       <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-        <button class="btn btn-gold btn-sm" style="flex:1" onclick="analyzeBundlePrice('${b.id}')">💰 Get Price Estimate</button>
+        <button class="btn btn-gold btn-sm" style="flex:1" onclick="analyzeBundlePrice('${b.id}')">💰 Price Estimate</button>
         <button class="btn btn-primary btn-sm" style="flex:1" onclick="generateBundleListing('${b.id}')">📝 Create Listing</button>
-        <button class="btn btn-ghost btn-sm" style="flex:1" onclick="editBundle('${b.id}')">✏️ Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick="editBundle('${b.id}')">✏️ Edit</button>
         <button class="btn btn-ghost btn-sm" onclick="deleteBundle('${b.id}')" style="color:var(--accent2)">🗑️</button>
       </div>
     </div>`;
   }).join('');
+}
+
+function addMissingToWantList(title, publisher, missingIssues){
+  let added=0;
+  missingIssues.forEach(iss=>{
+    if(addToWantSilent(title, String(iss), publisher)) added++;
+  });
+  saveDB();
+  document.getElementById('wantCount').textContent=DB.wantList.length;
+  toast(`🎯 Added ${added} missing issues to Want List`,'success',3000);
+}
+
+async function analyzeSeriesAI(title, publisher, owned, runPct, indivTotal, gaps){
+  if(!apiKeys.anthropic){ toast('Anthropic API key needed','error'); return; }
+
+  // Find the series card and show loading in it
+  const cards=document.querySelectorAll('#bundleList [style*="border-left"]');
+  let targetCard=null;
+  cards.forEach(card=>{
+    if(card.textContent.includes(title)) targetCard=card;
+  });
+
+  const resultId='aiSeriesResult_'+title.replace(/\W/g,'');
+  let resultDiv=document.getElementById(resultId);
+  if(!resultDiv){
+    resultDiv=document.createElement('div');
+    resultDiv.id=resultId;
+    if(targetCard) targetCard.appendChild(resultDiv);
+  }
+  resultDiv.innerHTML=`<div class="spin-wrap" style="padding:.5rem"><div class="spin"></div><div class="pulse-txt">AI analyzing ${title}…</div></div>`;
+
+  // Get the actual issues owned
+  const seriesComics=DB.comics.filter(c=>c.title.toLowerCase()===title.toLowerCase());
+  const issueList=seriesComics.map(c=>`#${cleanIssue(c.issue)}${c.grade?' ('+c.grade+')':''}`).join(', ');
+
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:anthropicHeaders(),
+      body:JSON.stringify({
+        model:'claude-haiku-4-5-20251001',max_tokens:500,
+        messages:[{role:'user',content:`Analyze this comic book run for a collector deciding to keep collecting or sell:
+
+Series: "${title}" by ${publisher||'unknown publisher'}
+Issues owned: ${issueList}
+Run completeness: ${runPct}% complete
+Individual value total: $${indivTotal}
+Missing issues count: ${gaps}
+
+Answer these questions honestly:
+1. Is this a series worth completing? (consider demand, era, collector interest)
+2. If they complete the run, realistically what would a complete set be worth vs individual?
+3. Or should they bundle and sell now?
+4. What's the #1 most valuable issue in a typical run of this series?
+
+Respond ONLY with JSON:
+{
+  "verdict": "collect|sell|either",
+  "verdict_label": "Keep Collecting|Sell Now as Bundle|Your Call",
+  "verdict_color": "green|red|gold",
+  "complete_run_value": "Estimate what a complete run would sell for",
+  "current_bundle_value": "What current issues would sell for as a bundle",
+  "upside": "If you complete the run, you gain X",
+  "key_issue_tip": "The most valuable issue to watch for in this series",
+  "reasoning": "2-3 sentences of honest advice",
+  "action": "Specific next step recommendation"
+}`}]})});
+    const data=await res.json();
+    const d=JSON.parse(data.content.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim());
+    const vColor=d.verdict_color==='green'?'var(--green)':d.verdict_color==='red'?'var(--accent2)':'var(--gold)';
+
+    resultDiv.innerHTML=`
+      <div style="margin-top:.6rem;padding:.7rem;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:4px;border-left:3px solid ${vColor}">
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;color:${vColor};margin-bottom:.4rem">🤖 ${d.verdict_label||'AI Analysis'}</div>
+        <div style="font-size:.77rem;color:var(--paper2);line-height:1.6;margin-bottom:.5rem">${d.reasoning}</div>
+        ${d.complete_run_value?`<div style="font-size:.73rem;color:var(--green);margin-bottom:.2rem">📈 Complete run value: <strong>${d.complete_run_value}</strong></div>`:''}
+        ${d.current_bundle_value?`<div style="font-size:.73rem;color:var(--gold);margin-bottom:.2rem">📦 Bundle now for: <strong>${d.current_bundle_value}</strong></div>`:''}
+        ${d.upside?`<div style="font-size:.73rem;color:var(--dim);margin-bottom:.2rem">💰 Upside: ${d.upside}</div>`:''}
+        ${d.key_issue_tip?`<div style="font-size:.73rem;color:var(--gold);margin-bottom:.4rem">🔑 Key issue tip: ${d.key_issue_tip}</div>`:''}
+        ${d.action?`<div style="font-size:.75rem;font-weight:700;color:var(--paper2);padding:.4rem .5rem;background:rgba(255,255,255,.04);border-radius:3px">👉 ${d.action}</div>`:''}
+      </div>`;
+  }catch(e){
+    resultDiv.innerHTML=`<div style="font-size:.75rem;color:var(--accent2);margin-top:.4rem">Could not analyze. Check API key.</div>`;
+  }
 }
 
 function quickCreateBundle(title, publisher, ids){
@@ -5289,39 +5525,90 @@ function filterCrossovers(q){
 async function runScan(){
   const q=document.getElementById('psScan').value.trim();
   const grade=document.getElementById('psGrade').value;
-  if(!q){ toast('Enter a comic title.','error');  return; }
+  if(!q){ toast('Enter a comic title.','error'); return; }
   const div=document.getElementById('psResults');
-  div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Scanning prices…</div></div>`;
+  div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Researching prices…</div></div>`;
+
+  const enc=encodeURIComponent;
+  const ebayUrl=`https://www.ebay.com/sch/i.html?_nkw=${enc(q+' comic '+grade)}&LH_Sold=1&LH_Complete=1`;
+  const mcUrl=`https://www.mycomicshop.com/search?q=${enc(q)}`;
+  const gcUrl=`https://gocollect.com/search?q=${enc(q)}`;
+  const hipUrl=`https://www.hipcomicreg.net/search?q=${enc(q)}`;
+
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:anthropicHeaders(),body:JSON.stringify({model:'claude-haiku-4-5-20251001',max_tokens:1000,messages:[{role:'user',content:`You are a comic book price analyst with deep knowledge of actual market sales. Provide REALISTIC current market prices for "${q}" in ${grade} condition based on actual recent sales data.
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:anthropicHeaders(),
+      body:JSON.stringify({
+        model:'claude-haiku-4-5-20251001',max_tokens:800,
+        messages:[{role:'user',content:`You are a comic book price guide expert. Give realistic price estimates for: "${q}" in ${grade} condition.
 
-IMPORTANT: Do NOT use generic placeholder prices. Research this specific comic:
-- Is it a key issue (1st appearance, death, origin)? Price accordingly ($50-5000+)
-- Is it a common issue? Price honestly ($2-20 typically)  
-- Consider publisher, era, print run, and current collector demand
-- Bronze/Silver Age keys command major premiums
-- Modern commons are usually worth very little ($1-8)
+IMPORTANT RULES:
+1. You do NOT have real-time sales data — be honest about this
+2. Give price RANGES based on: era (Silver/Bronze/Copper/Modern), whether it's a key issue, print run, and current collector demand
+3. If it IS a key issue, explain exactly why and price accordingly
+4. If it is NOT a key issue, be honest — most modern commons are $2-8
+5. Always recommend the user verify on eBay sold listings for the actual current price
 
-Respond ONLY with valid JSON — use REAL estimated prices, not examples:
-{"title":"${q}","grade":"${grade}","sources":[{"name":"eBay Sold","price":45,"count":12,"trend":"up"},{"name":"MyComicShop","price":38,"count":3,"trend":"stable"},{"name":"Heritage","price":52,"count":2,"trend":"up"},{"name":"ComicConnect","price":48,"count":1,"trend":"stable"},{"name":"GoCollect","price":44,"count":8,"trend":"down"},{"name":"Hip Comic","price":40,"count":5,"trend":"stable"}],"average":44.5,"low":35,"high":58,"note":"Specific insight about this comic's market — mention if key issue, print run, or any market factors","recommended_price":46,"is_key_issue":true,"key_reason":"Why this is or isn't a key issue"}`}]})});
+Respond ONLY with valid JSON:
+{
+  "title":"${q}",
+  "grade":"${grade}",
+  "is_key_issue":true,
+  "key_reason":"First appearance of X, origin issue, etc. or 'Common issue, no major significance'",
+  "era":"Modern/Copper/Bronze/Silver/Golden",
+  "price_low":5,
+  "price_mid":12,
+  "price_high":25,
+  "price_confidence":"low|medium|high",
+  "confidence_note":"Why confidence is low/medium/high — e.g. key issues have consistent data, commons vary widely",
+  "note":"2-3 sentences of honest market context. Mention if print run was high, if demand is seasonal, etc.",
+  "cgc_multiplier":"Raw x2-3 for CGC 9.8 typically",
+  "verify_note":"Always check eBay Sold Listings for the most accurate current price"
+}`}]})});
     const data=await res.json();
     const d=JSON.parse(data.content.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim());
-    const ti=t=>t==='up'?'↑':t==='down'?'↓':'→';
-    const tc=t=>t==='up'?'var(--green)':t==='down'?'var(--accent2)':'var(--dim)';
-    div.innerHTML=`<div style="background:var(--panel);border:1px solid var(--border);padding:1.2rem">
-      <div class="sec-hdr mb-md"><div style="font-family:'Bebas Neue';font-size:1.3rem;letter-spacing:3px">${d.title}</div><span class="grade-pip g-vf" style="position:static;display:inline-block">${d.grade}</span></div>
-      <div class="price-grid">${d.sources.map(s=>`<div class="ps"><div class="ps-name">${s.name}</div><div class="ps-price">$${parseFloat(s.price).toFixed(2)} <span style="font-size:.9rem;color:${tc(s.trend)}">${ti(s.trend)}</span></div><div class="ps-sub">${s.count} sold</div></div>`).join('')}</div>
-      <div class="avg-bar mt-md">
-        <div><div class="fl">Market Average</div><div style="font-size:.72rem;color:var(--dim);margin-top:2px">Range: $${d.low} – $${d.high}</div></div>
-        <div style="font-family:'Bebas Neue';font-size:2rem;color:var(--gold);letter-spacing:2px">$${parseFloat(d.average).toFixed(2)}</div>
-      </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;padding:.8rem 1rem;background:rgba(74,222,128,.07);border:1px solid rgba(74,222,128,.2)">
-        <div class="fl">Recommended List Price</div>
-        <div style="font-family:'Bebas Neue';font-size:1.5rem;color:var(--green)">$${parseFloat(d.recommended_price).toFixed(2)}</div>
-      </div>
-      <div style="margin-top:.8rem;font-size:.8rem;color:var(--paper2);line-height:1.6">${d.note}</div>
-    </div>`;
-  } catch(e){ showFetchBlockedError(div, e, true); }
+
+    const confColor=d.price_confidence==='high'?'var(--green)':d.price_confidence==='medium'?'var(--gold)':'var(--accent2)';
+    const confLabel=d.price_confidence==='high'?'High confidence':'Medium confidence — verify on eBay';
+    if(d.price_confidence!=='high') d.price_confidence='low';
+
+    div.innerHTML=`
+      <div style="background:var(--panel);border:1px solid var(--border);padding:1.2rem;border-radius:4px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.8rem;flex-wrap:wrap;gap:.4rem">
+          <div>
+            <div style="font-family:'Bebas Neue';font-size:1.2rem;letter-spacing:2px;color:var(--paper)">${d.title}</div>
+            <div style="font-size:.72rem;color:var(--dim)">${d.era||''} · ${d.is_key_issue?'<span style="color:var(--gold)">🔑 KEY ISSUE</span>':'Common Issue'}</div>
+          </div>
+          <span class="grade-pip g-vf" style="position:static;display:inline-block">${d.grade}</span>
+        </div>
+
+        ${d.is_key_issue?`<div style="padding:.5rem .8rem;background:rgba(255,214,10,.08);border:1px solid rgba(255,214,10,.25);border-radius:4px;font-size:.78rem;color:var(--gold);margin-bottom:.8rem">🔑 ${d.key_reason}</div>`:''}
+
+        <div class="price-grid" style="margin-bottom:.8rem">
+          <div class="ps"><div class="ps-name">LOW</div><div class="ps-price">$${d.price_low}</div></div>
+          <div class="ps"><div class="ps-name">MID</div><div class="ps-price text-gold">$${d.price_mid}</div></div>
+          <div class="ps"><div class="ps-name">HIGH</div><div class="ps-price">$${d.price_high}</div></div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.8rem;padding:.5rem .7rem;background:rgba(255,255,255,.03);border-radius:4px;font-size:.75rem">
+          <span style="color:${confColor}">●</span>
+          <span style="color:var(--dim)">${confLabel}</span>
+        </div>
+
+        <div style="font-size:.8rem;color:var(--paper2);line-height:1.6;margin-bottom:1rem">${d.note}</div>
+
+        <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem;font-weight:700;letter-spacing:1px">VERIFY CURRENT PRICE →</div>
+        <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+          <a href="${ebayUrl}" target="_blank" class="btn btn-primary btn-sm" style="font-size:.72rem;text-decoration:none">📦 eBay Sold</a>
+          <a href="${mcUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">🏪 MyComicShop</a>
+          <a href="${gcUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">📊 GoCollect</a>
+          <a href="${hipUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">📈 Hip Comic</a>
+        </div>
+        <div style="margin-top:.6rem;font-size:.7rem;color:var(--dim);font-style:italic">
+          ⚠ AI price estimates are based on training data, not live sales. Always verify on eBay Sold Listings before buying or selling.
+        </div>
+      </div>`;
+  }catch(e){ showFetchBlockedError(div, e, true); }
 }
 
 // ══════════════════════════════════
@@ -5406,29 +5693,103 @@ async function loadAITaxGuidance(){
 //  REPORTS
 // ══════════════════════════════════
 function renderReports(){
-  const val=DB.comics.reduce((s,c)=>s+(parseFloat(c.price)||0),0);
-  const cost=DB.comics.reduce((s,c)=>s+(parseFloat(c.cost)||0),0);
-  const rev=DB.sold.reduce((s,c)=>s+(parseFloat(c.soldPrice)||0),0);
-  const roi=cost>0?Math.round(((val-cost)/cost)*100):0;
-  document.getElementById('rp-comics').textContent=DB.comics.length;
+  const comics=DB.comics;
+  const sold=DB.sold;
+  const val=comics.reduce((s,c)=>s+(parseFloat(c.price)||0),0);
+  const cost=comics.reduce((s,c)=>s+(parseFloat(c.cost)||0),0);
+  const rev=sold.reduce((s,c)=>s+(parseFloat(c.soldPrice)||0),0);
+  const soldCost=sold.reduce((s,c)=>s+(parseFloat(c.costBasis)||0),0);
+  const profit=rev-soldCost;
+  const roi=cost>0?((val-cost)/cost*100):0;
+
+  // Core stats
+  document.getElementById('rp-comics').textContent=comics.length;
   document.getElementById('rp-value').textContent='$'+val.toLocaleString(undefined,{maximumFractionDigits:0});
-  document.getElementById('rp-sold-n').textContent=DB.sold.length;
-  document.getElementById('rp-roi').textContent=roi+'%';
-  const top=[...DB.comics].sort((a,b)=>(parseFloat(b.price)||0)-(parseFloat(a.price)||0)).slice(0,5);
-  document.getElementById('topValueList').innerHTML=top.length?top.map((c,i)=>`<div class="receipt-row">
-    <div style="font-family:'Bebas Neue';font-size:1.1rem;color:var(--gold);width:24px">${i+1}</div>
-    ${c.image?`<img src="${c.image}" style="width:30px;height:45px;object-fit:cover">`:'<div style="width:30px;height:45px;background:var(--border);display:grid;place-items:center">📔</div>'}
-    <div style="flex:1"><strong>${c.title}</strong> #${c.issue} <span class="text-dim">${c.year?'('+c.year+')':''}</span></div>
-    ${c.grade?`<span class="grade-pip ${gc(c.grade)}" style="position:static;display:inline-block">${c.grade}</span>`:''}
-    <div style="font-family:'Bebas Neue';color:var(--gold);font-size:1.1rem">${c.price?'$'+parseFloat(c.price).toFixed(0):'—'}</div>
-  </div>`).join(''):`<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-txt">No priced comics yet</div></div>`;
-  const recent=[...DB.sold].sort((a,b)=>new Date(b.soldAt)-new Date(a.soldAt)).slice(0,5);
-  document.getElementById('recentSalesList').innerHTML=recent.length?recent.map(s=>`<div class="receipt-row">
-    ${s.image?`<img src="${s.image}" style="width:30px;height:45px;object-fit:cover">`:'<div style="width:30px;height:45px;background:var(--border);display:grid;place-items:center">📔</div>'}
-    <div style="flex:1"><strong>${s.title}</strong> #${s.issue}</div>
-    <div style="font-family:'Bebas Neue';color:var(--green);font-size:1.1rem">$${parseFloat(s.soldPrice||0).toFixed(2)}</div>
-    <div class="text-dim" style="font-size:.72rem">${s.soldAt?new Date(s.soldAt).toLocaleDateString():'—'}</div>
-  </div>`).join(''):`<div class="empty-state"><div class="empty-icon">💰</div><div class="empty-txt">No sales yet</div></div>`;
+  document.getElementById('rp-invested').textContent='$'+cost.toLocaleString(undefined,{maximumFractionDigits:0});
+  const roiEl=document.getElementById('rp-roi');
+  roiEl.textContent=(roi>=0?'+':'')+roi.toFixed(0)+'%';
+  roiEl.style.color=roi>=0?'var(--green)':'var(--accent2)';
+
+  // Selling performance
+  if(sold.length){
+    document.getElementById('rp-profitBar').style.display='block';
+    document.getElementById('rp-sold-n').textContent=sold.length;
+    document.getElementById('rp-revenue').textContent='$'+rev.toFixed(0);
+    const profEl=document.getElementById('rp-profit');
+    profEl.textContent=(profit>=0?'+$':'-$')+Math.abs(profit).toFixed(0);
+    profEl.style.color=profit>=0?'var(--green)':'var(--accent2)';
+    document.getElementById('rp-avgsale').textContent='$'+(sold.length?rev/sold.length:0).toFixed(0);
+  }
+
+  // Publisher breakdown
+  const pubMap={};
+  comics.forEach(c=>{
+    const p=c.publisher||'Unknown';
+    if(!pubMap[p]) pubMap[p]={count:0,value:0};
+    pubMap[p].count++;
+    pubMap[p].value+=parseFloat(c.price)||0;
+  });
+  const pubs=Object.entries(pubMap).sort((a,b)=>b[1].count-a[1].count).slice(0,6);
+  const maxCount=pubs[0]?.[1].count||1;
+  document.getElementById('rp-publishers').innerHTML=pubs.length?pubs.map(([p,d])=>`
+    <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.35rem">
+      <div style="font-size:.75rem;color:var(--paper2);width:90px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p}</div>
+      <div style="flex:1;height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${Math.round(d.count/maxCount*100)}%;background:var(--gold);border-radius:3px"></div>
+      </div>
+      <div style="font-size:.72rem;color:var(--dim);width:60px;text-align:right;flex-shrink:0">${d.count} · $${d.value.toFixed(0)}</div>
+    </div>`).join(''):'<div style="font-size:.78rem;color:var(--dim)">Add publisher info to your comics to see breakdown</div>';
+
+  // ── PRICE AGING WARNING ──────────────────────────────────
+  const now=Date.now();
+  const NINETY_DAYS=90*24*60*60*1000;
+  const stale=comics.filter(c=>c.price&&parseFloat(c.price)>0&&c.addedAt&&(now-new Date(c.addedAt).getTime())>NINETY_DAYS);
+  const staleEl=document.getElementById('rp-stale');
+  if(stale.length){
+    staleEl.innerHTML=`
+      <div style="padding:.7rem .9rem;background:rgba(255,149,0,.07);border:1px solid rgba(255,149,0,.3);border-radius:4px;margin-bottom:.8rem">
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.82rem;color:var(--orange);margin-bottom:.3rem">
+          ⏰ ${stale.length} comic${stale.length!==1?'s':''} with prices 90+ days old
+        </div>
+        <div style="font-size:.74rem;color:var(--dim);margin-bottom:.5rem">Markets change — check these for updated prices before selling.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:.3rem">
+          ${stale.slice(0,6).map(c=>`<span style="font-size:.7rem;padding:.2rem .5rem;background:rgba(255,149,0,.1);border-radius:3px;color:var(--orange)">${c.title} #${cleanIssue(c.issue)}</span>`).join('')}
+          ${stale.length>6?`<span style="font-size:.7rem;color:var(--dim)">+${stale.length-6} more</span>`:''}
+        </div>
+      </div>`;
+  } else { staleEl.innerHTML=''; }
+
+  // Top 5 most valuable
+  const top=[...comics].sort((a,b)=>(parseFloat(b.price)||0)-(parseFloat(a.price)||0)).slice(0,5);
+  document.getElementById('topValueList').innerHTML=top.length?top.map((c,i)=>`
+    <div style="display:flex;align-items:center;gap:.7rem;padding:.6rem 0;border-bottom:1px solid rgba(255,255,255,.05);cursor:pointer" onclick="openDetail('${c.id}')">
+      <div style="font-family:'Bebas Neue';font-size:1.1rem;color:var(--gold);width:20px;text-align:center;flex-shrink:0">${i+1}</div>
+      ${(c.drivePhotoUrl||c.coverUrl||c.image)?`<img src="${c.drivePhotoUrl||c.coverUrl||c.image}" style="width:32px;height:48px;object-fit:cover;border-radius:2px;flex-shrink:0" onerror="this.style.display='none'">`:`<div style="width:32px;height:48px;background:var(--border);border-radius:2px;display:grid;place-items:center;font-size:.9rem;flex-shrink:0">📔</div>`}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.82rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.title} <span style="color:var(--dim)">#${cleanIssue(c.issue)}</span></div>
+        <div style="font-size:.7rem;color:var(--dim)">${c.publisher||''} ${c.year?'· '+c.year:''}</div>
+      </div>
+      ${c.grade?`<span class="grade-pip ${gc(c.grade)}" style="position:static;display:inline-block;flex-shrink:0">${c.grade}</span>`:''}
+      <div style="font-family:'Bebas Neue';color:var(--gold);font-size:1.2rem;flex-shrink:0">${c.price?'$'+parseFloat(c.price).toFixed(0):'—'}</div>
+    </div>`).join(''):`<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-txt">Add prices to your comics to see rankings</div></div>`;
+
+  // Recent sales
+  const recent=[...sold].sort((a,b)=>new Date(b.soldAt)-new Date(a.soldAt)).slice(0,5);
+  document.getElementById('recentSalesList').innerHTML=recent.length?recent.map(s=>{
+    const p=parseFloat(s.soldPrice||0);
+    const cb=parseFloat(s.costBasis||0);
+    const prof=p-cb;
+    return `<div style="display:flex;align-items:center;gap:.7rem;padding:.6rem 0;border-bottom:1px solid rgba(255,255,255,.05)">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:.82rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${s.title} <span style="color:var(--dim)">#${cleanIssue(s.issue)}</span></div>
+        <div style="font-size:.7rem;color:var(--dim)">${s.soldAt?new Date(s.soldAt).toLocaleDateString():''}</div>
+      </div>
+      <div style="text-align:right;flex-shrink:0">
+        <div style="font-family:'Bebas Neue';color:var(--green);font-size:1.1rem">$${p.toFixed(0)}</div>
+        ${cb?`<div style="font-size:.65rem;color:${prof>=0?'var(--green)':'var(--accent2)'}">${prof>=0?'+':''  }$${prof.toFixed(0)} profit</div>`:''}
+      </div>
+    </div>`;
+  }).join(''):`<div class="empty-state"><div class="empty-icon">💰</div><div class="empty-txt">No sales yet</div></div>`;
 }
 
 // ══════════════════════════════════
