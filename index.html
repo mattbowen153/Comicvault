@@ -1694,21 +1694,53 @@ body {
               <button class="btn btn-ghost" id="refreshCoversBtn" style="width:100%" onclick="refreshAllCovers(this)">🖼️ Refresh All Covers (${DB.comics.length} comics)</button>
             </div>
             <div style="background:var(--panel);border:1px solid rgba(255,214,10,.3);padding:1.2rem;border-radius:4px">
-              <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.3rem;color:var(--gold)">📤 Export Collection</div>
-              <p style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">Download a full backup — <strong style="color:var(--paper2)">do this before switching devices or URLs.</strong></p>
-              <button class="btn btn-gold" style="width:100%" onclick="exportData()">⬇ Download Backup (${DB.comics.length} comics)</button>
+              <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.3rem;color:var(--gold)">📤 Backup & Restore</div>
+              <p style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">
+                Your collection is saved in <strong style="color:var(--green)">3 local slots</strong> automatically on every save.
+                Use these options to back up to other locations or restore if something goes wrong.
+              </p>
+
+              <!-- Backup status -->
+              <div id="backupStatusBar" style="padding:.5rem .7rem;background:rgba(74,222,128,.08);border:1px solid rgba(74,222,128,.2);border-radius:4px;font-size:.75rem;color:var(--paper2);margin-bottom:.8rem">
+                <span id="backupStatusText">Checking backup status…</span>
+              </div>
+
+              <!-- Primary: Copy to clipboard -->
+              <button class="btn btn-gold" style="width:100%;margin-bottom:.5rem" onclick="exportData()">
+                📋 Copy Backup to Clipboard
+              </button>
+
+              <!-- Email to yourself -->
+              <button class="btn btn-ghost" style="width:100%;margin-bottom:.5rem" onclick="emailBackup()">
+                📧 Email Backup to Yourself
+              </button>
+
+              <!-- File download -->
+              <button class="btn btn-ghost" style="width:100%;margin-bottom:.5rem" onclick="downloadBackupFile()">
+                ⬇ Download as JSON File
+              </button>
             </div>
+
+            <!-- Restore options -->
             <div style="background:var(--panel);border:1px solid var(--border);padding:1.2rem;border-radius:4px">
-              <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.3rem">🔄 Restore Auto-Backup</div>
-              <p style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">If your collection disappeared after switching URLs, restore from the auto-backup saved in this browser.</p>
-              <button class="btn btn-primary" style="width:100%" onclick="restoreAutoBackup()">🔄 Restore From Auto-Backup</button>
-            </div>
-            <div style="background:var(--panel);border:1px solid var(--border);padding:1.2rem;border-radius:4px">
-              <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.3rem">📥 Import JSON Backup</div>
-              <p style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">Restore from a downloaded backup file. Merges with current data — won't delete anything.</p>
-              <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(this)">
-              <button class="btn btn-ghost" style="width:100%;margin-bottom:.5rem" onclick="document.getElementById('importFile').click()">⬆ Import JSON File</button>
-              <button class="btn btn-primary" style="width:100%" onclick="showPasteImport()">📋 Paste & Import (from Copy to Clipboard)</button>
+              <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.3rem">🔄 Restore Options</div>
+              <p style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">Multiple ways to get your data back if it ever disappears.</p>
+
+              <button class="btn btn-primary" style="width:100%;margin-bottom:.5rem" onclick="restoreAutoBackup()">
+                🔄 Restore from Local Backup
+              </button>
+              <button class="btn btn-primary" style="width:100%;margin-bottom:.5rem" onclick="showPasteImport()">
+                📋 Paste & Import Backup
+              </button>
+              <div style="display:flex;gap:.5rem">
+                <div style="flex:1">
+                  <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(this)">
+                  <button class="btn btn-ghost" style="width:100%" onclick="document.getElementById('importFile').click()">⬆ Import JSON File</button>
+                </div>
+                <div style="flex:1">
+                  <button class="btn btn-ghost" style="width:100%" id="gdriveLoadBtn2" onclick="gdriveLoad()" style="display:none">☁️ Load from Drive</button>
+                </div>
+              </div>
             </div>
             <div style="background:rgba(230,57,70,.07);border:1px solid rgba(230,57,70,.25);padding:1.2rem;border-radius:4px">
               <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;margin-bottom:.5rem;color:var(--accent2)">🗑️ Clear All Data</div>
@@ -3103,75 +3135,73 @@ async function identifyAndFixCover(id, input){
   const file=input.files[0]; if(!file) return;
   const status=document.getElementById('coverAIStatus');
   const resultsDiv=document.getElementById('coverSearchResults');
-  if(status){ status.style.display='block'; status.textContent='🤖 Reading comic…'; }
+  if(status){ status.style.display='block'; status.textContent='🔍 Reading comic cover…'; }
   if(resultsDiv) resultsDiv.innerHTML='';
 
+  const comic=DB.comics.find(x=>x.id===id);
   const reader=new FileReader();
   reader.onload=async e=>{
     const base64=e.target.result;
 
     if(!apiKeys.anthropic){
-      // No AI key — just save photo as-is
       uploadCoverFromBase64(id, base64);
       if(status) status.textContent='✅ Photo saved as cover';
       return;
     }
 
     try{
-      // Step 1: AI reads the photo to get title, issue, publisher, barcode
-      if(status) status.textContent='🔍 AI reading cover details…';
+      if(status) status.textContent='🤖 AI reading cover…';
       const res=await fetch('https://api.anthropic.com/v1/messages',{
         method:'POST',
         headers:anthropicHeaders(),
         body:JSON.stringify({
           model:'claude-sonnet-4-20250514',
-          max_tokens:400,
+          max_tokens:300,
           messages:[{role:'user',content:[
             {type:'image',source:{type:'base64',media_type:file.type,data:base64.split(',')[1]}},
-            {type:'text',text:`Read this comic book photo carefully. Extract ALL text you can see.
-Return ONLY JSON (no explanation):
-{
-  "title": "exact series title from cover",
-  "issue": "issue number only (digits)",
-  "publisher": "Marvel/DC/Image/etc",
-  "variant": "variant description if any e.g. Variant Edition",
-  "barcode": "barcode number if visible (usually 5-13 digits)",
-  "year": "year if visible",
-  "search_terms": ["3-4 specific search terms to find this exact cover image online"]
-}`}
+            {type:'text',text:`Look at this comic book photo. Read the cover text.
+Return ONLY this JSON with short string values — NO explanatory text, just the actual values:
+{"title":"series name","issue":"number only e.g. 25","publisher":"Marvel","variant":"variant name or empty string","barcode":"digits only or empty string","year":"4 digits or empty string"}
+If you cannot read a field clearly, use an empty string "". Never put explanatory phrases as values.`}
           ]}]
         })
       });
       const data=await res.json();
-      const txt=(data.content||[]).map(b=>b.text||'').join('');
-      const d=JSON.parse(txt.replace(/```json|```/g,'').trim());
+      const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
+      let d={};
+      try{ d=JSON.parse(txt.replace(/```json|```/g,'').trim()); }catch(e){ d={}; }
 
-      if(status) status.textContent=`✅ Found: ${d.title} #${d.issue}${d.variant?' · '+d.variant:''}`;
+      // Sanitize — reject values that are clearly not what we want
+      const isClean=v=>v&&v.length<60&&!/cannot|determine|visible|unclear|unknown/i.test(v);
+      const title = isClean(d.title)?d.title:(comic?.title||'');
+      const issue = isClean(d.issue)&&/^\d+$/.test(d.issue.trim())?d.issue.trim():(comic?.issue||'');
+      const publisher = isClean(d.publisher)?d.publisher:(comic?.publisher||'');
+      const variant = isClean(d.variant)?d.variant:(comic?.variant||'');
+      const barcode = d.barcode&&/^\d{5,}$/.test(d.barcode.trim())?d.barcode.trim():'';
+      const year = d.year&&/^\d{4}$/.test(d.year.trim())?d.year.trim():'';
 
-      // Update comic record with confirmed details
+      if(status) status.textContent=`✅ ${title} #${issue}${variant?' · '+variant:''} — searching covers…`;
+
+      // Only update fields if AI returned better data than what we have
       const idx=DB.comics.findIndex(x=>x.id===id);
       if(idx!==-1){
-        if(d.title) DB.comics[idx].title=d.title;
-        if(d.issue) DB.comics[idx].issue=cleanIssue(d.issue);
-        if(d.publisher) DB.comics[idx].publisher=d.publisher;
-        if(d.variant) DB.comics[idx].variant=d.variant;
-        if(d.year) DB.comics[idx].year=d.year;
+        if(title&&title!==comic?.title) DB.comics[idx].title=title;
+        if(issue&&/^\d+$/.test(issue)) DB.comics[idx].issue=issue;
+        if(publisher&&publisher!==comic?.publisher) DB.comics[idx].publisher=publisher;
+        if(variant) DB.comics[idx].variant=variant;
+        if(year) DB.comics[idx].year=year;
         saveDB();
       }
 
-      // Step 2: Search multiple cover databases using identified details
       if(status) status.textContent='🌐 Searching cover databases…';
-      const covers=await findCoverImages(d.title, d.issue, d.publisher, d.variant, d.barcode, d.search_terms, base64);
-
-      // Always include user's photo as an option
-      covers.unshift({url:base64,label:'Your photo',source:'Your Photo',isBase64:true});
-
+      const covers=await findCoverImages(title, issue, publisher, variant, barcode);
+      covers.unshift({url:base64,label:'Your photo',source:'📷 Your Photo',isBase64:true});
       showCoverResults(id, covers);
-      if(status) status.textContent=`Found ${covers.length} cover options — tap to use`;
+      if(status) status.textContent=`${covers.length} cover options — tap to use`;
 
     }catch(err){
-      console.warn('[Cover] Identify failed:',err);
-      // Fallback — just use photo
+      console.warn('[Cover]',err);
+      // Just save photo as cover
       uploadCoverFromBase64(id, base64);
       if(status) status.textContent='✅ Photo saved as cover';
     }
@@ -3180,89 +3210,94 @@ Return ONLY JSON (no explanation):
 }
 
 // Master cover image finder — searches all available databases
-async function findCoverImages(title, issue, publisher, variant, barcode, searchTerms, photoBase64){
+async function findCoverImages(title, issue, publisher, variant, barcode){
   const results=[];
-  const isMarvel=(publisher||'').toLowerCase().includes('marvel');
-  const isDC=(publisher||'').toLowerCase().includes('dc');
-  const isImage=(publisher||'').toLowerCase().includes('image');
+  const safeTitle=title||'';
+  const safeIssue=String(issue||'');
 
-  // Source 1: Comic Vine via CORS proxy (most comprehensive)
-  if(apiKeys.comicvine){
+  // Source 1: Barcode lookup (most precise — matches exact edition)
+  if(barcode && /^\d{5,}$/.test(barcode)){
     try{
-      const q=`${title} ${issue} ${publisher||''}`.trim();
-      const cvUrl=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume&limit=10`;
-      const proxy=`https://corsproxy.io/?${encodeURIComponent(cvUrl)}`;
-      const res=await fetch(proxy);
-      if(res.ok){
-        const raw=await res.text();
-        const data=JSON.parse(raw);
-        (data.results||[]).filter(r=>r.image?.medium_url).forEach(r=>{
-          results.push({url:r.image.medium_url,label:`${r.volume?.name||title} #${r.issue_number}`,source:'Comic Vine'});
-          // Also add super URL (higher res)
-          if(r.image.super_url) results.push({url:r.image.super_url,label:`${r.volume?.name||title} #${r.issue_number} (HQ)`,source:'Comic Vine HQ'});
-        });
-      }
-    }catch(e){}
-  }
-
-  // Source 2: Marvel API (official, accurate for Marvel)
-  if(isMarvel){
-    try{
-      // Marvel has a public endpoint that sometimes works without key
-      const res=await fetch(`https://gateway.marvel.com/v1/public/comics?titleStartsWith=${encodeURIComponent(title)}&issueNumber=${issue||1}&limit=5&apikey=demo`);
+      const res=await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`,{signal:AbortSignal.timeout(4000)});
       if(res.ok){
         const d=await res.json();
-        (d.data?.results||[]).filter(r=>r.thumbnail&&!r.thumbnail.path.includes('image_not_available')).forEach(r=>{
-          ['portrait_uncanny','portrait_fantastic','detail'].forEach(size=>{
-            results.push({url:`${r.thumbnail.path}/${size}.${r.thumbnail.extension}`,label:`${r.title} (Marvel)`,source:'Marvel Official'});
+        (d.items||[]).forEach(item=>{
+          (item.images||[]).slice(0,2).forEach(img=>{
+            if(img.startsWith('http')) results.push({url:img,label:`${item.title} (exact barcode match)`,source:'📦 Barcode',priority:0});
           });
         });
       }
     }catch(e){}
   }
 
-  // Source 3: League of Comic Geeks (great cover database, no CORS issues)
-  try{
-    const lcgRes=await fetch(`https://leagueofcomicgeeks.com/api/search/comics?query=${encodeURIComponent(title+' '+issue)}&format=json`);
-    if(lcgRes.ok){
-      const lcgData=await lcgRes.json();
-      (lcgData.comics||lcgData.results||[]).slice(0,4).forEach(r=>{
-        const img=r.cover_image||r.image||r.cover;
-        if(img) results.push({url:img.startsWith('http')?img:'https://leagueofcomicgeeks.com'+img,label:r.name||title,source:'League of Comic Geeks'});
-      });
-    }
-  }catch(e){}
+  // Source 2: Comic Vine via multiple CORS proxies
+  if(apiKeys.comicvine && safeTitle){
+    try{
+      const q=`${safeTitle} ${safeIssue}`.trim();
+      const cvUrl=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume&limit=12`;
+      const proxies=[
+        `https://corsproxy.io/?${encodeURIComponent(cvUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(cvUrl)}`,
+      ];
+      for(const proxy of proxies){
+        try{
+          const res=await fetch(proxy,{signal:AbortSignal.timeout(6000)});
+          if(!res.ok) continue;
+          const data=JSON.parse(await res.text());
+          if(data.results?.length){
+            data.results.filter(r=>r.image?.medium_url).forEach(r=>{
+              const exact=r.issue_number===safeIssue||r.issue_number===String(parseInt(safeIssue||'0'));
+              const label=`${r.volume?.name||safeTitle} #${r.issue_number}`;
+              if(r.image.super_url) results.push({url:r.image.super_url,label:label+' (HQ)',source:'Comic Vine',priority:exact?1:3});
+              results.push({url:r.image.medium_url,label,source:'Comic Vine',priority:exact?1:3});
+            });
+            break;
+          }
+        }catch(e){ continue; }
+      }
+    }catch(e){}
+  }
 
-  // Source 4: Google Books (good for collected editions)
-  try{
-    const gbRes=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent('"'+title+'" comic')}&maxResults=5`);
-    if(gbRes.ok){
-      const gbData=await gbRes.json();
-      (gbData.items||[]).filter(b=>{
-        const t=(b.volumeInfo?.title||'').toLowerCase();
-        return t.includes((title||'').toLowerCase().split(' ')[0])&&b.volumeInfo?.imageLinks;
-      }).forEach(b=>{
-        const links=b.volumeInfo.imageLinks;
-        const best=links.extraLarge||links.large||links.medium||links.thumbnail;
-        if(best) results.push({url:best.replace('zoom=1','zoom=5').replace('http:','https:'),label:b.volumeInfo.title,source:'Google Books'});
-      });
-    }
-  }catch(e){}
-
-  // Source 5: Open Library — title match only
-  try{
-    const olRes=await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(title)}&fields=cover_i,title&limit=5`);
-    if(olRes.ok){
-      const olData=await olRes.json();
-      (olData.docs||[]).filter(d=>d.cover_i&&(d.title||'').toLowerCase().includes((title||'').toLowerCase().split(' ')[0]))
-        .slice(0,3).forEach(d=>{
-          results.push({url:`https://covers.openlibrary.org/b/id/${d.cover_i}-L.jpg`,label:d.title,source:'Open Library'});
+  // Source 3: Marvel API for Marvel comics
+  if(safeTitle && (publisher||'').toLowerCase().includes('marvel')){
+    try{
+      const res=await fetch(
+        `https://gateway.marvel.com/v1/public/comics?titleStartsWith=${encodeURIComponent(safeTitle)}&issueNumber=${safeIssue||1}&limit=6&apikey=demo`,
+        {signal:AbortSignal.timeout(4000)}
+      );
+      if(res.ok){
+        const d=await res.json();
+        (d.data?.results||[]).filter(r=>r.thumbnail&&!r.thumbnail.path.includes('image_not_available')).forEach(r=>{
+          results.push({url:`${r.thumbnail.path}/portrait_uncanny.${r.thumbnail.extension}`,label:r.title,source:'Marvel',priority:2});
         });
-    }
-  }catch(e){}
+      }
+    }catch(e){}
+  }
 
+  // Source 4: Google Books — strict title match
+  if(safeTitle){
+    try{
+      const res=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent('"'+safeTitle+'" comic')}&maxResults=6`,{signal:AbortSignal.timeout(4000)});
+      if(res.ok){
+        const d=await res.json();
+        (d.items||[]).filter(b=>{
+          const t=(b.volumeInfo?.title||'').toLowerCase();
+          return t.includes(safeTitle.toLowerCase().split(' ')[0])&&b.volumeInfo?.imageLinks;
+        }).forEach(b=>{
+          const links=b.volumeInfo.imageLinks;
+          const img=(links.extraLarge||links.large||links.medium||links.thumbnail||'').replace('zoom=1','zoom=5').replace('http:','https:');
+          if(img&&!results.find(r=>r.url===img)) results.push({url:img,label:b.volumeInfo.title,source:'Google Books',priority:4});
+        });
+      }
+    }catch(e){}
+  }
+
+  // Sort best matches first
+  results.sort((a,b)=>(a.priority??5)-(b.priority??5));
   return results;
 }
+
+// Smart crop
 
 // Smart crop using AI to find comic boundaries, then canvas to crop/enhance
 async function autoEnhancePhoto(base64, fileType){
@@ -3391,7 +3426,7 @@ async function searchCoversForFix(id){
   const resultsDiv=document.getElementById('coverSearchResults'); if(!resultsDiv) return;
   resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Searching cover databases…</div></div>`;
 
-  const results=await findCoverImages(q, cleanIssue(c.issue), c.publisher, c.variant, null, null, null);
+  const results=await findCoverImages(q, cleanIssue(c.issue), c.publisher, c.variant, null);
 
   showCoverResults(id, results);
 }
@@ -5051,6 +5086,7 @@ function showSettingsTab(tab,el){
   el.classList.add('active');
   document.querySelectorAll('#page-settings .tab-pane').forEach(p=>p.classList.remove('active'));
   document.getElementById('st-'+tab).classList.add('active');
+  if(tab==='data') setTimeout(updateBackupStatus, 100);
 }
 
 // ══════════════════════════════════
@@ -7301,6 +7337,45 @@ function exportData(){
   const payload={comics:DB.comics,listings:DB.listings,sold:DB.sold,receipts:DB.receipts,wantList:DB.wantList,exportedAt:new Date().toISOString(),version:'2.0'};
   const json=JSON.stringify(payload);
   showExportModal(json);
+}
+
+function emailBackup(){
+  const payload={comics:DB.comics,listings:DB.listings,sold:DB.sold,receipts:DB.receipts,wantList:DB.wantList,exportedAt:new Date().toISOString(),version:'2.0'};
+  const json=JSON.stringify(payload);
+  const subject=encodeURIComponent(`ComicVault Backup — ${DB.comics.length} comics — ${new Date().toLocaleDateString()}`);
+  const body=encodeURIComponent(`Your ComicVault backup is below. To restore:\n1. Copy everything between the dashes\n2. Open ComicVault → Settings → Data → Paste & Import\n\n----------\n${json}\n----------`);
+  window.open(`mailto:?subject=${subject}&body=${body}`);
+  toast('📧 Email app opened with your backup');
+}
+
+function downloadBackupFile(){
+  const payload={comics:DB.comics,listings:DB.listings,sold:DB.sold,receipts:DB.receipts,wantList:DB.wantList,exportedAt:new Date().toISOString(),version:'2.0'};
+  const json=JSON.stringify(payload,null,2);
+  try{
+    const blob=new Blob([json],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`comicvault-${DB.comics.length}comics-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+    toast('✅ File downloaded!');
+  }catch(e){
+    // Android fallback — show copy modal
+    showExportModal(json);
+  }
+}
+
+function updateBackupStatus(){
+  const el=document.getElementById('backupStatusText'); if(!el) return;
+  const slots=[];
+  try{ const s=localStorage.getItem('cvp2'); if(s){ const d=JSON.parse(s); slots.push(`Main: ${d.comics?.length||0} comics`); } }catch(e){}
+  try{ const s=localStorage.getItem('cvp2_backup'); if(s){ const d=JSON.parse(s); slots.push(`Backup: ${d.comics?.length||0} comics (${d.savedAt?new Date(d.savedAt).toLocaleTimeString():''})`); } }catch(e){}
+  try{ const s=localStorage.getItem('cvp2_snap'); if(s){ const d=JSON.parse(s); slots.push(`Snapshot: ${d.comics?.length||0} comics (${d.snapDate||''})`); } }catch(e){}
+  const driveStatus=gdriveToken?'☁️ Google Drive: connected':'☁️ Google Drive: not connected';
+  el.innerHTML=slots.length
+    ? `<strong style="color:var(--green)">✅ ${slots.length} local backup slots active</strong><br><span style="font-size:.7rem;color:var(--dim)">${slots.join(' · ')}</span><br><span style="font-size:.7rem;color:${gdriveToken?'var(--green)':'var(--dim)'}">${driveStatus}</span>`
+    : `<span style="color:var(--accent2)">⚠ No backups found</span>`;
 }
 
 function showExportModal(json){
