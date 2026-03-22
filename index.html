@@ -3438,9 +3438,7 @@ function openCoverCropper(id, input){
   reader.onload=async e=>{
     const src=e.target.result;
     document.getElementById('fixCoverModal')?.remove();
-    // Show loading screen immediately
     showCropLoading();
-    // AI auto-detects comic edges
     const crop=await aiDetectCropArea(src, file.type);
     hideCropLoading();
     showCropperModal(id, src, crop);
@@ -3454,34 +3452,47 @@ function showCropLoading(){
   el.style.cssText='position:fixed;inset:0;background:#000;z-index:10001;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem';
   el.innerHTML=`
     <div style="width:48px;height:48px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div>
-    <div style="color:#ffd60a;font-family:'Barlow Condensed';font-size:1.1rem;font-weight:700">🤖 AI finding comic edges…</div>
-    <div style="color:#666;font-size:.8rem">Detecting the cover boundaries</div>`;
+    <div style="color:#ffd60a;font-family:'Barlow Condensed';font-size:1.1rem;font-weight:700">🤖 Finding comic edges…</div>
+    <div style="color:#666;font-size:.8rem">Using Sonnet vision for accuracy</div>`;
   document.body.appendChild(el);
 }
 function hideCropLoading(){ document.getElementById('cropLoading')?.remove(); }
 
 async function aiDetectCropArea(base64, mimeType){
-  const def={x1:5,y1:5,x2:95,y2:95}; // % from top-left
+  const def={x1:8,y1:8,x2:92,y2:92};
   if(!apiKeys.anthropic) return def;
   try{
+    // Use Sonnet not Haiku — much better at precise coordinate detection
     const res=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST', headers:anthropicHeaders(),
       body:JSON.stringify({
-        model:'claude-haiku-4-5-20251001', max_tokens:60,
+        model:'claude-sonnet-4-20250514', max_tokens:120,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
-          {type:'text',text:`Find the comic book cover rectangle in this photo.
-Return ONLY JSON with percentages from the TOP-LEFT corner of the image:
-{"x1":10,"y1":5,"x2":88,"y2":95}
-x1=left edge %, y1=top edge %, x2=right edge %, y2=bottom edge %.
-Cut out background, floor, hands. Be tight to the comic edges.`}
+          {type:'text',text:`Look at this photo carefully. Find the comic book cover — it's the rectangular printed comic in the image.
+
+I need the bounding box as PIXEL PERCENTAGES from the TOP-LEFT of the ENTIRE IMAGE (0,0 = top-left corner, 100,100 = bottom-right corner).
+
+Return ONLY this JSON, nothing else:
+{"x1":15,"y1":20,"x2":85,"y2":95}
+
+Where x1=left edge of comic %, y1=top edge of comic %, x2=right edge of comic %, y2=bottom edge of comic %.
+
+Be precise — measure to the actual printed edges of the comic, not the background.`}
         ]}]
       })
     });
     const data=await res.json();
     const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
-    const p=JSON.parse(txt.replace(/```json|```/g,'').trim());
-    if(typeof p.x1==='number'&&typeof p.x2==='number'&&p.x1<p.x2&&p.y1<p.y2) return p;
+    // Extract JSON even if there's surrounding text
+    const match=txt.match(/\{[^}]+\}/);
+    if(!match) return def;
+    const p=JSON.parse(match[0]);
+    // Validate — must be sensible values
+    if(typeof p.x1==='number'&&typeof p.x2==='number'&&
+       p.x1>=0&&p.x2<=100&&p.y1>=0&&p.y2<=100&&
+       p.x1<p.x2&&p.y1<p.y2&&
+       (p.x2-p.x1)>10&&(p.y2-p.y1)>10) return p;
     return def;
   }catch(e){ return def; }
 }
@@ -3493,119 +3504,201 @@ function showCropperModal(id, src, aiCrop){
   modal.id='cropperModal';
   modal.style.cssText='position:fixed;inset:0;background:#000;z-index:10000;display:flex;flex-direction:column';
   modal.innerHTML=`
-    <div style="padding:.6rem 1rem;background:#111;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
-      <div style="font-family:'Barlow Condensed';font-weight:700;color:#ffd60a;font-size:.95rem">
-        ✂️ AI cropped — adjust handles if needed
+    <div style="padding:.5rem 1rem;background:#111;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:.5rem">
+      <div style="font-family:'Barlow Condensed';font-weight:700;color:#ffd60a;font-size:.9rem;flex:1">
+        ✂️ Drag corners to the comic edges
       </div>
-      <button onclick="document.getElementById('cropperModal').remove();fixCover('${id}')" style="background:none;border:none;color:#aaa;font-size:1.3rem;cursor:pointer">✕</button>
+      <button onclick="cropperAutoSnap()" style="background:#333;border:1px solid #555;color:#ffd60a;padding:.35rem .7rem;border-radius:4px;font-size:.75rem;font-weight:700;cursor:pointer;white-space:nowrap">🎯 Re-detect</button>
+      <button onclick="document.getElementById('cropperModal').remove();fixCover('${id}')" style="background:none;border:none;color:#aaa;font-size:1.3rem;cursor:pointer;padding:.2rem">✕</button>
     </div>
     <div style="flex:1;position:relative;overflow:hidden;touch-action:none" id="cropperArea">
       <img id="cropperImg" src="${src}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-select:none;pointer-events:none">
-      <svg id="cropperSVG" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none"></svg>
+      <canvas id="cropperCanvas" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none"></canvas>
     </div>
-    <div style="padding:.7rem;background:#111;display:flex;gap:.5rem;flex-shrink:0">
-      <button onclick="cropperRotate()" style="background:#222;border:1px solid #444;color:#fff;padding:.6rem .8rem;border-radius:4px;font-size:.82rem;cursor:pointer;flex-shrink:0">↻ Rotate</button>
-      <button onclick="cropperReset()" style="background:#222;border:1px solid #444;color:#fff;padding:.6rem .8rem;border-radius:4px;font-size:.82rem;cursor:pointer;flex-shrink:0">⟳ Reset</button>
-      <button onclick="cropperApply('${id}')" style="flex:1;background:#ffd60a;border:none;color:#000;padding:.7rem;border-radius:4px;font-weight:700;font-size:.95rem;cursor:pointer">✅ Use This Cover</button>
+    <div style="padding:.6rem;background:#111;display:flex;gap:.5rem;flex-shrink:0">
+      <button onclick="cropperRotate()" style="background:#222;border:1px solid #444;color:#fff;padding:.55rem .8rem;border-radius:4px;font-size:.8rem;cursor:pointer;flex-shrink:0">↻ Rotate</button>
+      <button onclick="cropperReset()" style="background:#222;border:1px solid #444;color:#fff;padding:.55rem .8rem;border-radius:4px;font-size:.8rem;cursor:pointer;flex-shrink:0">⟳ Reset</button>
+      <button onclick="cropperApply('${id}')" style="flex:1;background:#ffd60a;border:none;color:#000;padding:.65rem;border-radius:4px;font-weight:700;font-size:.95rem;cursor:pointer">✅ Use This Cover</button>
     </div>`;
   document.body.appendChild(modal);
-  _cropState={pts:null,drag:null,imgRot:0,origSrc:src,aiCrop:aiCrop||{x1:5,y1:5,x2:95,y2:95}};
+  _cropState={pts:null,drag:-1,imgRot:0,origSrc:src,aiCrop:aiCrop||{x1:8,y1:8,x2:92,y2:92}};
   const img=document.getElementById('cropperImg');
-  img.onload=()=>initCropperWithAI();
-  if(img.complete) initCropperWithAI();
+  // Wait for image to be fully laid out
+  const tryInit=()=>{
+    const area=document.getElementById('cropperArea');
+    if(area&&img.naturalWidth>0&&area.clientWidth>0){
+      initCropperWithAI();
+    } else {
+      setTimeout(tryInit,50);
+    }
+  };
+  img.onload=()=>setTimeout(tryInit,30);
+  if(img.complete&&img.naturalWidth>0) setTimeout(tryInit,30);
 }
 
-let _cropState={pts:null,drag:null,imgRot:0,origSrc:'',aiCrop:null};
+let _cropState={pts:null,drag:-1,imgRot:0,origSrc:'',aiCrop:null,imgRect:null};
 
-function initCropperWithAI(){
+function _getImageRect(){
   const area=document.getElementById('cropperArea');
   const img=document.getElementById('cropperImg');
-  if(!area||!img) return;
+  if(!area||!img||!img.naturalWidth) return null;
   const aw=area.clientWidth, ah=area.clientHeight;
-
-  // Calculate where the image actually renders inside the contain box
   const iRatio=img.naturalWidth/img.naturalHeight;
   const aRatio=aw/ah;
   let iw,ih,ix,iy;
   if(iRatio>aRatio){ iw=aw; ih=aw/iRatio; }
   else { ih=ah; iw=ah*iRatio; }
   ix=(aw-iw)/2; iy=(ah-ih)/2;
-  _cropState.imgRect={ix,iy,iw,ih};
+  return {ix,iy,iw,ih,aw,ah};
+}
 
-  // AI gives x1,y1,x2,y2 as % of image from top-left
-  const c=_cropState.aiCrop||{x1:5,y1:5,x2:95,y2:95};
-  // Convert to screen pixels
+function initCropperWithAI(){
+  const r=_getImageRect(); if(!r) return;
+  _cropState.imgRect=r;
+  const c=_cropState.aiCrop||{x1:8,y1:8,x2:92,y2:92};
+  // Convert AI percentages (of full image) to screen coordinates
+  // The AI sees the full image, so percentages are relative to naturalWidth/naturalHeight
+  // But the rendered image may have letterbox, so we map through imgRect
   _cropState.pts=[
-    {x:ix+iw*(c.x1/100), y:iy+ih*(c.y1/100)}, // top-left
-    {x:ix+iw*(c.x2/100), y:iy+ih*(c.y1/100)}, // top-right
-    {x:ix+iw*(c.x2/100), y:iy+ih*(c.y2/100)}, // bottom-right
-    {x:ix+iw*(c.x1/100), y:iy+ih*(c.y2/100)}, // bottom-left
+    {x:r.ix+r.iw*(c.x1/100), y:r.iy+r.ih*(c.y1/100)}, // top-left
+    {x:r.ix+r.iw*(c.x2/100), y:r.iy+r.ih*(c.y1/100)}, // top-right
+    {x:r.ix+r.iw*(c.x2/100), y:r.iy+r.ih*(c.y2/100)}, // bottom-right
+    {x:r.ix+r.iw*(c.x1/100), y:r.iy+r.ih*(c.y2/100)}, // bottom-left
   ];
-  renderCropper();
+  renderCropperCanvas();
   bindCropperEvents();
 }
 
-function renderCropper(){
-  const svg=document.getElementById('cropperSVG'); if(!svg) return;
+function renderCropperCanvas(){
+  const canvas=document.getElementById('cropperCanvas');
+  const area=document.getElementById('cropperArea');
+  if(!canvas||!area||!_cropState.pts) return;
+  // Match canvas to actual pixel size
+  canvas.width=area.clientWidth;
+  canvas.height=area.clientHeight;
+  const ctx=canvas.getContext('2d');
   const pts=_cropState.pts;
-  const poly=pts.map(p=>`${p.x},${p.y}`).join(' ');
-  const aw=svg.clientWidth||window.innerWidth;
-  const ah=svg.clientHeight||window.innerHeight;
-  svg.innerHTML=`
-    <defs>
-      <mask id="cropMask">
-        <rect width="${aw}" height="${ah}" fill="white"/>
-        <polygon points="${poly}" fill="black"/>
-      </mask>
-    </defs>
-    <rect width="${aw}" height="${ah}" fill="rgba(0,0,0,.65)" mask="url(#cropMask)"/>
-    <polygon points="${poly}" fill="none" stroke="#ffd60a" stroke-width="2.5"/>
-    <line x1="${pts[0].x}" y1="${pts[0].y}" x2="${pts[2].x}" y2="${pts[2].y}" stroke="rgba(255,214,10,.2)" stroke-width="1" stroke-dasharray="4"/>
-    <line x1="${pts[1].x}" y1="${pts[1].y}" x2="${pts[3].x}" y2="${pts[3].y}" stroke="rgba(255,214,10,.2)" stroke-width="1" stroke-dasharray="4"/>
-    ${pts.map((p,i)=>`
-      <circle cx="${p.x}" cy="${p.y}" r="22" fill="${i===_cropState.drag?'#ffd60a':'rgba(255,214,10,.25)'}" stroke="#ffd60a" stroke-width="2.5"/>
-      <text x="${p.x}" y="${p.y+5}" text-anchor="middle" fill="${i===_cropState.drag?'#000':'#ffd60a'}" font-size="14" font-weight="bold">⊹</text>
-    `).join('')}`;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Dark overlay outside selection
+  ctx.fillStyle='rgba(0,0,0,0.65)';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Cut out the selected area (lighten it)
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x,pts[0].y);
+  pts.forEach(p=>ctx.lineTo(p.x,p.y));
+  ctx.closePath();
+  ctx.clip();
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.restore();
+
+  // Border
+  ctx.strokeStyle='#ffd60a';
+  ctx.lineWidth=2.5;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x,pts[0].y);
+  pts.forEach(p=>ctx.lineTo(p.x,p.y));
+  ctx.closePath();
+  ctx.stroke();
+
+  // Rule-of-thirds grid inside selection
+  const minX=Math.min(...pts.map(p=>p.x));
+  const maxX=Math.max(...pts.map(p=>p.x));
+  const minY=Math.min(...pts.map(p=>p.y));
+  const maxY=Math.max(...pts.map(p=>p.y));
+  ctx.strokeStyle='rgba(255,214,10,0.18)';
+  ctx.lineWidth=1;
+  [1/3,2/3].forEach(t=>{
+    const x=minX+(maxX-minX)*t;
+    const y=minY+(maxY-minY)*t;
+    ctx.beginPath(); ctx.moveTo(x,minY); ctx.lineTo(x,maxY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(minX,y); ctx.lineTo(maxX,y); ctx.stroke();
+  });
+
+  // Corner handles — large circles for easy touch
+  const HANDLE_R=26;
+  pts.forEach((p,i)=>{
+    const active=i===_cropState.drag;
+    // Shadow
+    ctx.shadowColor='rgba(0,0,0,.6)';
+    ctx.shadowBlur=8;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,HANDLE_R,0,Math.PI*2);
+    ctx.fillStyle=active?'#ffd60a':'rgba(255,214,10,0.3)';
+    ctx.fill();
+    ctx.strokeStyle='#ffd60a';
+    ctx.lineWidth=2.5;
+    ctx.stroke();
+    ctx.shadowBlur=0;
+    // Corner icon
+    ctx.fillStyle=active?'#000':'#ffd60a';
+    ctx.font=`bold ${HANDLE_R}px Arial`;
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText(['↖','↗','↘','↙'][i],p.x,p.y);
+  });
 }
 
 function bindCropperEvents(){
-  const svg=document.getElementById('cropperSVG'); if(!svg) return;
+  const canvas=document.getElementById('cropperCanvas');
+  if(!canvas) return;
+  // Remove old listeners by replacing element
+  const fresh=canvas.cloneNode(true);
+  canvas.parentNode.replaceChild(fresh,canvas);
+  const c=document.getElementById('cropperCanvas');
+
+  const HANDLE_R=40; // generous hit target
   const getPos=ev=>{
-    const r=svg.getBoundingClientRect();
+    const r=c.getBoundingClientRect();
     const t=ev.touches?ev.touches[0]:ev;
-    return{x:t.clientX-r.left,y:t.clientY-r.top};
+    return{x:(t.clientX-r.left)*(c.width/r.width),y:(t.clientY-r.top)*(c.height/r.height)};
   };
   const down=ev=>{
     ev.preventDefault();
     const pos=getPos(ev);
-    _cropState.drag=_cropState.pts.findIndex(p=>Math.hypot(p.x-pos.x,p.y-pos.y)<35);
+    _cropState.drag=_cropState.pts.findIndex(p=>Math.hypot(p.x-pos.x,p.y-pos.y)<HANDLE_R);
+    renderCropperCanvas();
   };
   const move=ev=>{
     ev.preventDefault();
-    if(_cropState.drag==null||_cropState.drag<0) return;
+    if(_cropState.drag<0) return;
     const pos=getPos(ev);
-    _cropState.pts[_cropState.drag]={x:pos.x,y:pos.y};
-    renderCropper();
+    const r=_cropState.imgRect;
+    // Clamp to image bounds
+    const x=Math.max(r.ix,Math.min(r.ix+r.iw,pos.x));
+    const y=Math.max(r.iy,Math.min(r.iy+r.ih,pos.y));
+    _cropState.pts[_cropState.drag]={x,y};
+    renderCropperCanvas();
   };
-  const up=()=>{_cropState.drag=null;};
-  svg.addEventListener('mousedown',down);
-  svg.addEventListener('mousemove',move);
-  svg.addEventListener('mouseup',up);
-  svg.addEventListener('touchstart',down,{passive:false});
-  svg.addEventListener('touchmove',move,{passive:false});
-  svg.addEventListener('touchend',up);
+  const up=()=>{ _cropState.drag=-1; renderCropperCanvas(); };
+  c.addEventListener('mousedown',down);
+  c.addEventListener('mousemove',move);
+  c.addEventListener('mouseup',up);
+  c.addEventListener('touchstart',down,{passive:false});
+  c.addEventListener('touchmove',move,{passive:false});
+  c.addEventListener('touchend',up);
+}
+
+async function cropperAutoSnap(){
+  // Re-run AI detection on current image
+  showCropLoading();
+  const crop=await aiDetectCropArea(_cropState.origSrc,'image/jpeg');
+  hideCropLoading();
+  _cropState.aiCrop=crop;
+  initCropperWithAI();
+  toast('🎯 Re-detected edges','info',2000);
 }
 
 function cropperRotate(){
   _cropState.imgRot=(_cropState.imgRot+90)%360;
   const img=document.getElementById('cropperImg');
   if(img) img.style.transform=`rotate(${_cropState.imgRot}deg)`;
-  setTimeout(initCropperWithAI,80);
+  setTimeout(initCropperWithAI,100);
 }
 
-function cropperReset(){
-  initCropperWithAI();
-}
+function cropperReset(){ initCropperWithAI(); }
 
 function cropperApply(id){
   const pts=_cropState.pts;
@@ -3613,38 +3706,47 @@ function cropperApply(id){
   const img=document.getElementById('cropperImg');
   if(!img||!pts||!ir){ toast('Crop not ready','error'); return; }
 
-  // Convert screen crop points to natural image coordinates
-  const scaleX=img.naturalWidth/ir.iw;
-  const scaleY=img.naturalHeight/ir.ih;
+  // Map screen pts back to natural image coordinates
+  const canvas=document.getElementById('cropperCanvas');
+  const scaleX=img.naturalWidth/(ir.iw*(canvas?.width/ir.aw||1));
+  const scaleY=img.naturalHeight/(ir.ih*(canvas?.height/ir.ah||1));
+
+  const natScaleX=img.naturalWidth/ir.iw;
+  const natScaleY=img.naturalHeight/ir.ih;
+
   const minX=Math.min(...pts.map(p=>p.x));
   const maxX=Math.max(...pts.map(p=>p.x));
   const minY=Math.min(...pts.map(p=>p.y));
   const maxY=Math.max(...pts.map(p=>p.y));
 
-  let sx=Math.max(0,(minX-ir.ix)*scaleX);
-  let sy=Math.max(0,(minY-ir.iy)*scaleY);
-  let sw=Math.min((maxX-minX)*scaleX, img.naturalWidth-sx);
-  let sh=Math.min((maxY-minY)*scaleY, img.naturalHeight-sy);
+  const sx=Math.max(0,(minX-ir.ix)*natScaleX);
+  const sy=Math.max(0,(minY-ir.iy)*natScaleY);
+  const sw=Math.min((maxX-minX)*natScaleX, img.naturalWidth-sx);
+  const sh=Math.min((maxY-minY)*natScaleY, img.naturalHeight-sy);
 
-  const canvas=document.createElement('canvas');
-  canvas.width=400; canvas.height=600;
-  const ctx=canvas.getContext('2d');
+  if(sw<10||sh<10){ toast('Selection too small — adjust handles','error'); return; }
 
-  const cropImg=new Image();
-  cropImg.onload=()=>{
-    ctx.save();
+  // Render to 2:3 canvas (standard comic ratio)
+  const out=document.createElement('canvas');
+  out.width=400; out.height=600;
+  const ctx=out.getContext('2d');
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,400,600);
+
+  const cropSrc=new Image();
+  cropSrc.onload=()=>{
     if(_cropState.imgRot){
       ctx.translate(200,300);
       ctx.rotate(_cropState.imgRot*Math.PI/180);
       ctx.translate(-200,-300);
     }
-    ctx.drawImage(cropImg, sx, sy, sw, sh, 0, 0, 400, 600);
-    ctx.restore();
-    const result=canvas.toDataURL('image/jpeg',0.93);
+    ctx.drawImage(cropSrc, sx, sy, sw, sh, 0, 0, 400, 600);
+    const result=out.toDataURL('image/jpeg',0.93);
     document.getElementById('cropperModal')?.remove();
     uploadCoverFromBase64(id, result);
+    toast('✅ Cover saved!');
   };
-  cropImg.src=_cropState.origSrc;
+  cropSrc.src=_cropState.origSrc;
 }
 
 
