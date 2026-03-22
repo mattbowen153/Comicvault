@@ -3295,73 +3295,59 @@ async function identifyAndFixCover(id, input){
   const file=input.files[0]; if(!file) return;
   const status=document.getElementById('coverAIStatus');
   const resultsDiv=document.getElementById('coverSearchResults');
-  if(status){ status.style.display='block'; status.textContent='🔍 Reading comic cover…'; }
-  if(resultsDiv) resultsDiv.innerHTML='';
+  if(status){ status.style.display='block'; status.textContent='🤖 AI reading cover…'; }
+  if(resultsDiv) resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Reading your photo…</div></div>`;
 
   const comic=DB.comics.find(x=>x.id===id);
   const reader=new FileReader();
   reader.onload=async e=>{
     const base64=e.target.result;
-
     if(!apiKeys.anthropic){
       uploadCoverFromBase64(id, base64);
       if(status) status.textContent='✅ Photo saved as cover';
       return;
     }
-
     try{
-      if(status) status.textContent='🤖 AI reading cover…';
       const res=await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',
-        headers:anthropicHeaders(),
+        method:'POST', headers:anthropicHeaders(),
         body:JSON.stringify({
-          model:'claude-sonnet-4-20250514',
-          max_tokens:300,
+          model:'claude-sonnet-4-20250514', max_tokens:200,
           messages:[{role:'user',content:[
             {type:'image',source:{type:'base64',media_type:file.type,data:base64.split(',')[1]}},
-            {type:'text',text:`Look at this comic book photo. Read the cover text.
-Return ONLY this JSON with short string values — NO explanatory text, just the actual values:
-{"title":"series name","issue":"number only e.g. 25","publisher":"Marvel","variant":"variant name or empty string","barcode":"digits only or empty string","year":"4 digits or empty string"}
-If you cannot read a field clearly, use an empty string "". Never put explanatory phrases as values.`}
+            {type:'text',text:`Read this comic book cover. Return ONLY valid JSON, no explanation:
+{"title":"series title e.g. Fantastic Four","issue":"number only e.g. 25","publisher":"e.g. Marvel","variant":"e.g. Variant Edition or empty"}
+Use empty string "" for anything unclear. Never write sentences as values.`}
           ]}]
         })
       });
       const data=await res.json();
       const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
       let d={};
-      try{ d=JSON.parse(txt.replace(/```json|```/g,'').trim()); }catch(e){ d={}; }
+      try{ d=JSON.parse(txt.replace(/```json|```/g,'').trim()); }catch(ex){}
 
-      // Sanitize — reject values that are clearly not what we want
-      const isClean=v=>v&&v.length<60&&!/cannot|determine|visible|unclear|unknown/i.test(v);
-      const title = isClean(d.title)?d.title:(comic?.title||'');
-      const issue = isClean(d.issue)&&/^\d+$/.test(d.issue.trim())?d.issue.trim():(comic?.issue||'');
-      const publisher = isClean(d.publisher)?d.publisher:(comic?.publisher||'');
-      const variant = isClean(d.variant)?d.variant:(comic?.variant||'');
-      const barcode = d.barcode&&/^\d{5,}$/.test(d.barcode.trim())?d.barcode.trim():'';
-      const year = d.year&&/^\d{4}$/.test(d.year.trim())?d.year.trim():'';
+      const clean=v=>v&&typeof v==='string'&&v.length<80&&!/cannot|determine|unclear|unknown|visible|sorry|unable/i.test(v)?v.trim():'';
+      const title=clean(d.title)||comic?.title||'';
+      const issue=clean(d.issue)||comic?.issue||'';
+      const publisher=clean(d.publisher)||comic?.publisher||'';
+      const variant=clean(d.variant)||'';
 
-      if(status) status.textContent=`✅ ${title} #${issue}${variant?' · '+variant:''} — searching covers…`;
+      if(status) status.textContent=`✅ ${title} #${issue}${variant?' ('+variant+')':''} — searching…`;
 
-      // Only update fields if AI returned better data than what we have
       const idx=DB.comics.findIndex(x=>x.id===id);
       if(idx!==-1){
-        if(title&&title!==comic?.title) DB.comics[idx].title=title;
-        if(issue&&/^\d+$/.test(issue)) DB.comics[idx].issue=issue;
-        if(publisher&&publisher!==comic?.publisher) DB.comics[idx].publisher=publisher;
+        if(title) DB.comics[idx].title=title;
+        if(issue&&/^\d+$/.test(issue.trim())) DB.comics[idx].issue=issue.trim();
+        if(publisher) DB.comics[idx].publisher=publisher;
         if(variant) DB.comics[idx].variant=variant;
-        if(year) DB.comics[idx].year=year;
         saveDB();
       }
 
-      if(status) status.textContent='🌐 Searching cover databases…';
-      const covers=await findCoverImages(title, issue, publisher, variant, barcode);
-      covers.unshift({url:base64,label:'Your photo',source:'📷 Your Photo',isBase64:true});
+      if(status) status.textContent='🌐 Searching Comic Vine…';
+      const covers=await findCoverImages(title, issue, publisher, variant, null);
+      covers.unshift({url:base64,label:'📷 Your photo — use this if others are wrong',source:'Your Photo',isBase64:true});
       showCoverResults(id, covers);
-      if(status) status.textContent=`${covers.length} cover options — tap to use`;
-
+      if(status) status.textContent=covers.length>1?`Found ${covers.length-1} covers + your photo`:'Use your photo below';
     }catch(err){
-      console.warn('[Cover]',err);
-      // Just save photo as cover
       uploadCoverFromBase64(id, base64);
       if(status) status.textContent='✅ Photo saved as cover';
     }
@@ -3369,91 +3355,53 @@ If you cannot read a field clearly, use an empty string "". Never put explanator
   reader.readAsDataURL(file);
 }
 
-// Master cover image finder — searches all available databases
 async function findCoverImages(title, issue, publisher, variant, barcode){
   const results=[];
-  const safeTitle=title||'';
-  const safeIssue=String(issue||'');
+  if(!title) return results;
+  const safeIssue=String(issue||'').replace(/\D/g,'');
 
-  // Source 1: Barcode lookup (most precise — matches exact edition)
-  if(barcode && /^\d{5,}$/.test(barcode)){
-    try{
-      const res=await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`,{signal:AbortSignal.timeout(4000)});
-      if(res.ok){
-        const d=await res.json();
-        (d.items||[]).forEach(item=>{
-          (item.images||[]).slice(0,2).forEach(img=>{
-            if(img.startsWith('http')) results.push({url:img,label:`${item.title} (exact barcode match)`,source:'📦 Barcode',priority:0});
-          });
-        });
-      }
-    }catch(e){}
-  }
-
-  // Source 2: Comic Vine via multiple CORS proxies
-  if(apiKeys.comicvine && safeTitle){
-    try{
-      const q=`${safeTitle} ${safeIssue}`.trim();
-      const cvUrl=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume&limit=12`;
-      const proxies=[
-        `https://corsproxy.io/?${encodeURIComponent(cvUrl)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(cvUrl)}`,
-      ];
-      for(const proxy of proxies){
+  if(apiKeys.comicvine){
+    const queries=[`${title} ${safeIssue}`.trim(), title];
+    for(const q of queries){
+      const cvUrl=`https://comicvine.gamespot.com/api/search/?api_key=${apiKeys.comicvine}&format=json&resources=issue&query=${encodeURIComponent(q)}&field_list=image,name,issue_number,volume,cover_date&limit=15`;
+      for(const proxy of[`https://corsproxy.io/?${encodeURIComponent(cvUrl)}`,`https://api.allorigins.win/raw?url=${encodeURIComponent(cvUrl)}`]){
         try{
-          const res=await fetch(proxy,{signal:AbortSignal.timeout(6000)});
+          const res=await fetch(proxy,{signal:AbortSignal.timeout(7000)});
           if(!res.ok) continue;
-          const data=JSON.parse(await res.text());
-          if(data.results?.length){
-            data.results.filter(r=>r.image?.medium_url).forEach(r=>{
-              const exact=r.issue_number===safeIssue||r.issue_number===String(parseInt(safeIssue||'0'));
-              const label=`${r.volume?.name||safeTitle} #${r.issue_number}`;
-              if(r.image.super_url) results.push({url:r.image.super_url,label:label+' (HQ)',source:'Comic Vine',priority:exact?1:3});
-              results.push({url:r.image.medium_url,label,source:'Comic Vine',priority:exact?1:3});
-            });
-            break;
-          }
+          const text=await res.text();
+          if(!text.trim().startsWith('{')) continue;
+          const data=JSON.parse(text);
+          if(!data.results?.length) continue;
+          data.results.filter(r=>r.image?.medium_url).forEach(r=>{
+            const rIssue=String(r.issue_number||'').replace(/\D/g,'');
+            const exact=rIssue===safeIssue;
+            const label=`${r.volume?.name||title} #${r.issue_number}`;
+            if(r.image.super_url&&!results.find(x=>x.url===r.image.super_url))
+              results.push({url:r.image.super_url,label,source:'Comic Vine',priority:exact?1:3});
+            if(!results.find(x=>x.url===r.image.medium_url))
+              results.push({url:r.image.medium_url,label,source:'Comic Vine',priority:exact?2:4});
+          });
+          if(results.length) break;
         }catch(e){ continue; }
       }
-    }catch(e){}
+      if(results.length>=3) break;
+    }
   }
 
-  // Source 3: Marvel API for Marvel comics
-  if(safeTitle && (publisher||'').toLowerCase().includes('marvel')){
-    try{
-      const res=await fetch(
-        `https://gateway.marvel.com/v1/public/comics?titleStartsWith=${encodeURIComponent(safeTitle)}&issueNumber=${safeIssue||1}&limit=6&apikey=demo`,
-        {signal:AbortSignal.timeout(4000)}
-      );
-      if(res.ok){
-        const d=await res.json();
-        (d.data?.results||[]).filter(r=>r.thumbnail&&!r.thumbnail.path.includes('image_not_available')).forEach(r=>{
-          results.push({url:`${r.thumbnail.path}/portrait_uncanny.${r.thumbnail.extension}`,label:r.title,source:'Marvel',priority:2});
-        });
-      }
-    }catch(e){}
-  }
+  try{
+    const res=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent('"'+title+'" comic book')}&maxResults=6`,{signal:AbortSignal.timeout(4000)});
+    if(res.ok){
+      const d=await res.json();
+      const word0=title.toLowerCase().split(' ')[0];
+      (d.items||[]).filter(b=>(b.volumeInfo?.title||'').toLowerCase().includes(word0)&&b.volumeInfo?.imageLinks).forEach(b=>{
+        const links=b.volumeInfo.imageLinks;
+        const img=(links.extraLarge||links.large||links.medium||links.thumbnail||'').replace('zoom=1','zoom=5').replace('http:','https:');
+        if(img&&!results.find(r=>r.url===img)) results.push({url:img,label:b.volumeInfo.title,source:'Google Books',priority:5});
+      });
+    }
+  }catch(e){}
 
-  // Source 4: Google Books — strict title match
-  if(safeTitle){
-    try{
-      const res=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent('"'+safeTitle+'" comic')}&maxResults=6`,{signal:AbortSignal.timeout(4000)});
-      if(res.ok){
-        const d=await res.json();
-        (d.items||[]).filter(b=>{
-          const t=(b.volumeInfo?.title||'').toLowerCase();
-          return t.includes(safeTitle.toLowerCase().split(' ')[0])&&b.volumeInfo?.imageLinks;
-        }).forEach(b=>{
-          const links=b.volumeInfo.imageLinks;
-          const img=(links.extraLarge||links.large||links.medium||links.thumbnail||'').replace('zoom=1','zoom=5').replace('http:','https:');
-          if(img&&!results.find(r=>r.url===img)) results.push({url:img,label:b.volumeInfo.title,source:'Google Books',priority:4});
-        });
-      }
-    }catch(e){}
-  }
-
-  // Sort best matches first
-  results.sort((a,b)=>(a.priority??5)-(b.priority??5));
+  results.sort((a,b)=>(a.priority??9)-(b.priority??9));
   return results;
 }
 
