@@ -40,6 +40,28 @@
 }
 
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+
+/* Android Chrome fixes */
+html{
+  overscroll-behavior:none; /* Prevents pull-to-refresh interfering */
+  -webkit-text-size-adjust:100%; /* Prevents Android text size adjustment */
+}
+body{
+  overscroll-behavior:none;
+  -webkit-overflow-scrolling:touch; /* Smooth momentum scrolling */
+  touch-action:pan-y; /* Allow vertical scroll, block horizontal */
+}
+/* Fix Android keyboard pushing content up */
+@media screen and (max-height:500px){
+  .bottom-nav{display:none;}
+  #contentScroll{padding-bottom:.5rem;}
+}
+/* Android input focus — prevent zoom on focus (font-size >= 16px) */
+input,select,textarea{font-size:16px;}
+.fi{font-size:16px;}
+/* GPU acceleration for animations */
+.modal-bg,.modal,.card-hover,.bnav-item{will-change:opacity;}
+.comic-card{will-change:transform;}
 html,body{height:100%;overflow:hidden;}
 
 body {
@@ -2164,7 +2186,7 @@ function restoreAutoBackup(){
       return;
     }catch(e){}
   }
-  alert('No backup found. Use Settings → Data → Paste & Import if you have a copied backup.');
+  toast('No backup found — use Settings → Data → Paste & Import','error',4000);
 }
 
 loadDB();
@@ -2208,6 +2230,47 @@ loadDB();
 })();
 
 setTimeout(checkForRecovery, 600);
+
+// ── ANDROID FIXES ──────────────────────────────────────────
+(function androidFixes(){
+  // Fix 1: Prevent Android keyboard from resizing fixed bottom nav
+  // When soft keyboard opens, visualViewport shrinks — lock bottom nav position
+  if(window.visualViewport){
+    const bnav=document.querySelector('.bottom-nav');
+    const updateBnavPos=()=>{
+      if(!bnav) return;
+      const vv=window.visualViewport;
+      // If keyboard is open (viewport significantly smaller than window)
+      if(window.innerHeight - vv.height > 150){
+        bnav.style.transform=`translateY(${window.innerHeight-vv.height-vv.offsetTop}px)`;
+      } else {
+        bnav.style.transform='';
+      }
+    };
+    window.visualViewport.addEventListener('resize', updateBnavPos);
+    window.visualViewport.addEventListener('scroll', updateBnavPos);
+  }
+
+  // Fix 2: Prevent double-tap zoom on buttons (Android Chrome)
+  document.addEventListener('touchend',e=>{
+    if(e.target.tagName==='BUTTON'||e.target.closest('button')){
+      e.preventDefault();
+      e.target.click?.();
+    }
+  },{passive:false});
+
+  // Fix 3: Better scroll performance — add passive listeners to scroll containers
+  document.querySelectorAll('.modal-body,#contentScroll').forEach(el=>{
+    el.addEventListener('touchstart',()=>{},{passive:true});
+  });
+
+  // Fix 4: Prevent body scroll when modal is open
+  const observer=new MutationObserver(()=>{
+    const hasModal=document.querySelector('.modal-bg[style*="flex"],.modal-bg:not([style])');
+    document.body.style.overflow=hasModal?'hidden':'';
+  });
+  observer.observe(document.body,{childList:true,subtree:false});
+})();
 
 // Toast notification system — replaces jarring alert() for success messages
 function toast(msg, type='success', duration=2500){
@@ -2435,6 +2498,22 @@ function updateStats(){
   document.getElementById('s-sold').textContent='$'+rev.toLocaleString(undefined,{maximumFractionDigits:0});
   document.getElementById('nb-listings').textContent=listed;
   document.getElementById('nb-sold').textContent=DB.sold.length;
+  // Warn if storage is getting full
+  try{
+    const used=Object.keys(localStorage).reduce((t,k)=>t+(localStorage.getItem(k)||'').length,0);
+    const usedKB=Math.round(used/1024);
+    if(usedKB>3500){ // warn at 3.5MB (limit is 5MB)
+      const existing=document.getElementById('storageWarning');
+      if(!existing){
+        const w=document.createElement('div');
+        w.id='storageWarning';
+        w.style.cssText='position:fixed;bottom:calc(var(--bottom-nav-h)+8px);left:50%;transform:translateX(-50%);background:#ff6b35;color:#fff;padding:.4rem .9rem;border-radius:20px;font-size:.72rem;font-weight:700;z-index:999;white-space:nowrap';
+        w.innerHTML=`⚠ Storage ${usedKB}KB/5000KB — <a href="#" onclick="nav(document.querySelector('[data-page=settings]'));showSettingsTab('data',document.querySelector('#page-settings .tab'));return false;" style="color:#fff;text-decoration:underline">Backup now</a>`;
+        document.body.appendChild(w);
+        setTimeout(()=>w.remove(),8000);
+      }
+    }
+  }catch(e){}
 }
 
 function filterComics(v){ colSearch=v; renderCollection(); }
@@ -3032,7 +3111,7 @@ function fixCover(id){
   modal.className='modal-bg';
   modal.style.cssText='display:flex';
   modal.innerHTML=`
-    <div class="modal" style="max-width:440px">
+    <div class="modal" style="max-width:460px">
       <div class="modal-hdr">
         <div class="modal-title">🖼️ Fix Cover Art</div>
         <button class="modal-x" onclick="document.getElementById('fixCoverModal').remove()">✕</button>
@@ -3040,55 +3119,45 @@ function fixCover(id){
       <div class="modal-body" style="display:flex;flex-direction:column;gap:.8rem">
 
         <div style="font-size:.8rem;color:var(--dim)">
-          Fixing cover for <strong style="color:var(--paper)">${c.title} #${cleanIssue(c.issue)}</strong>
+          <strong style="color:var(--paper)">${c.title} #${cleanIssue(c.issue)}</strong>
           ${c.publisher?`<span style="color:var(--dim)"> · ${c.publisher}</span>`:''}
         </div>
 
-        <!-- OPTION 1: Scan barcode — most accurate -->
+        <!-- PRIMARY: Photo editor -->
         <div style="background:rgba(74,222,128,.06);border:2px solid rgba(74,222,128,.3);border-radius:6px;padding:.8rem">
-          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--green);margin-bottom:.3rem">📊 Most Accurate — Scan the Barcode</div>
-          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">Flip the comic over and scan the barcode on the back. This finds the <strong style="color:var(--paper2)">exact edition and variant</strong>.</div>
-          <input type="file" id="barcodePhotoForCover" accept="image/*" capture="environment" style="display:none" onchange="scanBarcodeForCover('${id}',this)">
-          <div style="display:flex;gap:.5rem;margin-bottom:.4rem">
-            <button class="btn btn-primary" style="flex:1;background:var(--green);border-color:var(--green);color:#000" onclick="document.getElementById('barcodePhotoForCover').click()">📷 Scan Barcode</button>
-            <button class="btn btn-ghost" style="flex:1" onclick="showManualBarcode('${id}')">⌨️ Enter Manually</button>
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;color:var(--green);margin-bottom:.3rem">📷 Take Photo → Drag to Crop</div>
+          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">
+            Take a photo of the comic cover. A crop tool appears — drag the corners to frame just the cover, then tap <strong style="color:var(--paper2)">Use This</strong>.
           </div>
-          <div id="barcodeStatus" style="font-size:.75rem;color:var(--dim);display:none"></div>
-        </div>
-
-        <!-- OPTION 2: Photograph cover — AI identifies -->
-        <div style="background:rgba(255,214,10,.06);border:1px solid rgba(255,214,10,.25);border-radius:6px;padding:.8rem">
-          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);margin-bottom:.3rem">📷 Photograph the Cover</div>
-          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">AI reads the cover and searches for the matching image.</div>
-          <input type="file" id="coverPhotoForAI" accept="image/*" capture="environment" style="display:none" onchange="identifyAndFixCover('${id}',this)">
+          <input type="file" id="coverCropInput" accept="image/*" capture="environment" style="display:none" onchange="openCoverCropper('${id}',this)">
           <div style="display:flex;gap:.5rem">
-            <button class="btn btn-gold" style="flex:1" onclick="document.getElementById('coverPhotoForAI').click()">📷 Take Photo</button>
-            <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('coverPhotoForAI').removeAttribute('capture');document.getElementById('coverPhotoForAI').click()">🖼️ Camera Roll</button>
+            <button class="btn btn-primary" style="flex:1;background:var(--green);border-color:var(--green);color:#000;font-weight:700" onclick="document.getElementById('coverCropInput').click()">📷 Take Photo</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('coverCropInput').removeAttribute('capture');document.getElementById('coverCropInput').click()">🖼️ Camera Roll</button>
           </div>
-          <div id="coverAIStatus" style="font-size:.75rem;color:var(--dim);margin-top:.5rem;display:none"></div>
         </div>
 
-        <!-- OPTION 3: Search by title -->
+        <!-- SECONDARY: Search by title -->
         <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:.8rem">
-          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--paper2);margin-bottom:.3rem">🔍 Search by Title</div>
-          <div style="display:flex;gap:.5rem;margin-bottom:.4rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--paper2);margin-bottom:.3rem">🔍 Search Comic Vine</div>
+          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.5rem">Searches Comic Vine's database. Works best with Comic Vine API key in Settings.</div>
+          <div style="display:flex;gap:.5rem">
             <input class="fi" id="coverSearchInput" value="${c.title}" style="flex:1;margin-bottom:0">
             <button class="btn btn-primary" onclick="searchCoversForFix('${id}')">Search</button>
           </div>
-          <div style="font-size:.7rem;color:var(--dim)">Tip: search just the title without issue number</div>
+          <div id="coverSearchStatus" style="font-size:.72rem;color:var(--dim);margin-top:.4rem"></div>
         </div>
 
         <!-- Current cover -->
         ${(c.coverUrl||c.drivePhotoUrl||c.image)?`
         <div style="display:flex;align-items:center;gap:.8rem;padding:.6rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px">
           <img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:55px;height:82px;object-fit:cover;border:1px solid var(--border);flex-shrink:0;border-radius:2px" onerror="this.style.display='none'">
-          <div style="flex:1;min-width:0">
+          <div style="flex:1">
             <div style="font-size:.72rem;color:var(--dim);margin-bottom:.4rem">Current cover</div>
-            <button class="btn btn-ghost btn-sm" style="font-size:.7rem;width:100%" onclick="clearCover('${id}')">✕ Remove</button>
+            <button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="clearCover('${id}')">✕ Remove</button>
           </div>
         </div>`:''}
 
-        <!-- Results -->
+        <!-- Search results -->
         <div id="coverSearchResults" style="max-height:300px;overflow-y:auto"></div>
       </div>
     </div>`;
@@ -3246,6 +3315,235 @@ async function lookupBarcodeForCover(id, barcode, status){
 
   showCoverResults(id, allCovers);
 }
+
+function openCoverCropper(id, input){
+  const file=input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    const src=e.target.result;
+    document.getElementById('fixCoverModal')?.remove();
+    // Show loading screen immediately
+    showCropLoading();
+    // AI auto-detects comic edges
+    const crop=await aiDetectCropArea(src, file.type);
+    hideCropLoading();
+    showCropperModal(id, src, crop);
+  };
+  reader.readAsDataURL(file);
+}
+
+function showCropLoading(){
+  const el=document.createElement('div');
+  el.id='cropLoading';
+  el.style.cssText='position:fixed;inset:0;background:#000;z-index:10001;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem';
+  el.innerHTML=`
+    <div style="width:48px;height:48px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div>
+    <div style="color:#ffd60a;font-family:'Barlow Condensed';font-size:1.1rem;font-weight:700">🤖 AI finding comic edges…</div>
+    <div style="color:#666;font-size:.8rem">Detecting the cover boundaries</div>`;
+  document.body.appendChild(el);
+}
+function hideCropLoading(){ document.getElementById('cropLoading')?.remove(); }
+
+async function aiDetectCropArea(base64, mimeType){
+  // Default crop (full image with small padding)
+  const def={left:5,top:5,right:95,bottom:95};
+  if(!apiKeys.anthropic) return def;
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST', headers:anthropicHeaders(),
+      body:JSON.stringify({
+        model:'claude-haiku-4-5-20251001', max_tokens:80,
+        messages:[{role:'user',content:[
+          {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
+          {type:'text',text:`Find the comic book cover in this photo. Give me the bounding box as percentages from each edge.
+Return ONLY JSON: {"left":8,"top":5,"right":92,"bottom":95}
+Values are % from that edge where the comic starts. Be precise — cut out background, hands, carpet, table.`}
+        ]}]
+      })
+    });
+    const data=await res.json();
+    const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
+    const parsed=JSON.parse(txt.replace(/```json|```/g,'').trim());
+    // Validate
+    if(typeof parsed.left==='number'&&parsed.left>=0&&parsed.right<=100) return parsed;
+    return def;
+  }catch(e){ return def; }
+}
+
+function showCropperModal(id, src, aiCrop){
+  const existing=document.getElementById('cropperModal');
+  if(existing) existing.remove();
+
+  const modal=document.createElement('div');
+  modal.id='cropperModal';
+  modal.style.cssText='position:fixed;inset:0;background:#000;z-index:10000;display:flex;flex-direction:column';
+  modal.innerHTML=`
+    <div style="padding:.6rem 1rem;background:#111;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <div style="font-family:'Barlow Condensed';font-weight:700;color:#ffd60a;font-size:.95rem">
+        ✂️ AI cropped — adjust handles if needed
+      </div>
+      <button onclick="document.getElementById('cropperModal').remove();fixCover('${id}')" style="background:none;border:none;color:#aaa;font-size:1.3rem;cursor:pointer">✕</button>
+    </div>
+    <div style="flex:1;position:relative;overflow:hidden;touch-action:none" id="cropperArea">
+      <img id="cropperImg" src="${src}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-select:none;pointer-events:none">
+      <svg id="cropperSVG" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none"></svg>
+    </div>
+    <div style="padding:.7rem;background:#111;display:flex;gap:.5rem;flex-shrink:0">
+      <button onclick="cropperRotate()" style="background:#222;border:1px solid #444;color:#fff;padding:.6rem .8rem;border-radius:4px;font-size:.82rem;cursor:pointer;flex-shrink:0">↻ Rotate</button>
+      <button onclick="cropperReset()" style="background:#222;border:1px solid #444;color:#fff;padding:.6rem .8rem;border-radius:4px;font-size:.82rem;cursor:pointer;flex-shrink:0">⟳ Reset</button>
+      <button onclick="cropperApply('${id}')" style="flex:1;background:#ffd60a;border:none;color:#000;padding:.7rem;border-radius:4px;font-weight:700;font-size:.95rem;cursor:pointer">✅ Use This Cover</button>
+    </div>`;
+  document.body.appendChild(modal);
+
+  _cropState={pts:null,drag:null,imgRot:0,origSrc:src,aiCrop:aiCrop||{left:5,top:5,right:95,bottom:95}};
+  const img=document.getElementById('cropperImg');
+  img.onload=()=>initCropperWithAI();
+  if(img.complete) initCropperWithAI();
+}
+
+let _cropState={pts:null,drag:null,imgRot:0,origSrc:'',aiCrop:null};
+
+function initCropperWithAI(){
+  const area=document.getElementById('cropperArea');
+  const img=document.getElementById('cropperImg');
+  if(!area||!img) return;
+  const aw=area.clientWidth, ah=area.clientHeight;
+  const iRatio=img.naturalWidth/img.naturalHeight;
+  const aRatio=aw/ah;
+  let iw,ih,ix,iy;
+  if(iRatio>aRatio){ iw=aw; ih=aw/iRatio; }
+  else { ih=ah; iw=ah*iRatio; }
+  ix=(aw-iw)/2; iy=(ah-ih)/2;
+
+  const c=_cropState.aiCrop||{left:5,top:5,right:95,bottom:95};
+  // Convert AI percentage crop to screen pixels
+  _cropState.pts=[
+    {x:ix+iw*(c.left/100),   y:iy+ih*(c.top/100)},
+    {x:ix+iw*(1-c.right/100+c.left/100+(c.right-c.left)/100), y:iy+ih*(c.top/100)},
+    {x:ix+iw*(1-c.right/100+c.left/100+(c.right-c.left)/100), y:iy+ih*(1-c.bottom/100+c.top/100+(c.bottom-c.top)/100)},
+    {x:ix+iw*(c.left/100),   y:iy+ih*(1-c.bottom/100+c.top/100+(c.bottom-c.top)/100)},
+  ];
+  // Simpler: just use direct percentage of rendered image
+  _cropState.pts=[
+    {x:ix+iw*(c.left/100),        y:iy+ih*(c.top/100)},
+    {x:ix+iw*((100-c.right)/100+c.left/100+(c.right-c.left)/100), y:iy+ih*(c.top/100)},
+    {x:ix+iw*((100-c.right)/100+c.left/100+(c.right-c.left)/100), y:iy+ih*((100-c.bottom)/100+c.top/100+(c.bottom-c.top)/100)},
+    {x:ix+iw*(c.left/100),        y:iy+ih*((100-c.bottom)/100+c.top/100+(c.bottom-c.top)/100)},
+  ];
+  // Even simpler and correct:
+  _cropState.imgRect={ix,iy,iw,ih};
+  _cropState.pts=[
+    {x:ix+iw*c.left/100,         y:iy+ih*c.top/100},
+    {x:ix+iw*(c.right/100),      y:iy+ih*c.top/100},
+    {x:ix+iw*(c.right/100),      y:iy+ih*(c.bottom/100)},
+    {x:ix+iw*c.left/100,         y:iy+ih*(c.bottom/100)},
+  ];
+  renderCropper();
+  bindCropperEvents();
+}
+
+function renderCropper(){
+  const svg=document.getElementById('cropperSVG'); if(!svg) return;
+  const pts=_cropState.pts;
+  const poly=pts.map(p=>`${p.x},${p.y}`).join(' ');
+  const aw=svg.clientWidth||window.innerWidth;
+  const ah=svg.clientHeight||window.innerHeight;
+  svg.innerHTML=`
+    <defs>
+      <mask id="cropMask">
+        <rect width="${aw}" height="${ah}" fill="white"/>
+        <polygon points="${poly}" fill="black"/>
+      </mask>
+    </defs>
+    <rect width="${aw}" height="${ah}" fill="rgba(0,0,0,.65)" mask="url(#cropMask)"/>
+    <polygon points="${poly}" fill="none" stroke="#ffd60a" stroke-width="2.5"/>
+    <line x1="${pts[0].x}" y1="${pts[0].y}" x2="${pts[2].x}" y2="${pts[2].y}" stroke="rgba(255,214,10,.2)" stroke-width="1" stroke-dasharray="4"/>
+    <line x1="${pts[1].x}" y1="${pts[1].y}" x2="${pts[3].x}" y2="${pts[3].y}" stroke="rgba(255,214,10,.2)" stroke-width="1" stroke-dasharray="4"/>
+    ${pts.map((p,i)=>`
+      <circle cx="${p.x}" cy="${p.y}" r="22" fill="${i===_cropState.drag?'#ffd60a':'rgba(255,214,10,.25)'}" stroke="#ffd60a" stroke-width="2.5"/>
+      <text x="${p.x}" y="${p.y+5}" text-anchor="middle" fill="${i===_cropState.drag?'#000':'#ffd60a'}" font-size="14" font-weight="bold">⊹</text>
+    `).join('')}`;
+}
+
+function bindCropperEvents(){
+  const svg=document.getElementById('cropperSVG'); if(!svg) return;
+  const getPos=ev=>{
+    const r=svg.getBoundingClientRect();
+    const t=ev.touches?ev.touches[0]:ev;
+    return{x:t.clientX-r.left,y:t.clientY-r.top};
+  };
+  const down=ev=>{
+    ev.preventDefault();
+    const pos=getPos(ev);
+    _cropState.drag=_cropState.pts.findIndex(p=>Math.hypot(p.x-pos.x,p.y-pos.y)<35);
+  };
+  const move=ev=>{
+    ev.preventDefault();
+    if(_cropState.drag==null||_cropState.drag<0) return;
+    const pos=getPos(ev);
+    _cropState.pts[_cropState.drag]={x:pos.x,y:pos.y};
+    renderCropper();
+  };
+  const up=()=>{_cropState.drag=null;};
+  svg.addEventListener('mousedown',down);
+  svg.addEventListener('mousemove',move);
+  svg.addEventListener('mouseup',up);
+  svg.addEventListener('touchstart',down,{passive:false});
+  svg.addEventListener('touchmove',move,{passive:false});
+  svg.addEventListener('touchend',up);
+}
+
+function cropperRotate(){
+  _cropState.imgRot=(_cropState.imgRot+90)%360;
+  const img=document.getElementById('cropperImg');
+  if(img) img.style.transform=`rotate(${_cropState.imgRot}deg)`;
+  setTimeout(initCropperWithAI,80);
+}
+
+function cropperReset(){
+  initCropperWithAI();
+}
+
+function cropperApply(id){
+  const pts=_cropState.pts;
+  const ir=_cropState.imgRect;
+  const img=document.getElementById('cropperImg');
+  if(!img||!pts||!ir){ toast('Crop not ready','error'); return; }
+
+  // Convert screen crop points to natural image coordinates
+  const scaleX=img.naturalWidth/ir.iw;
+  const scaleY=img.naturalHeight/ir.ih;
+  const minX=Math.min(...pts.map(p=>p.x));
+  const maxX=Math.max(...pts.map(p=>p.x));
+  const minY=Math.min(...pts.map(p=>p.y));
+  const maxY=Math.max(...pts.map(p=>p.y));
+
+  let sx=Math.max(0,(minX-ir.ix)*scaleX);
+  let sy=Math.max(0,(minY-ir.iy)*scaleY);
+  let sw=Math.min((maxX-minX)*scaleX, img.naturalWidth-sx);
+  let sh=Math.min((maxY-minY)*scaleY, img.naturalHeight-sy);
+
+  const canvas=document.createElement('canvas');
+  canvas.width=400; canvas.height=600;
+  const ctx=canvas.getContext('2d');
+
+  const cropImg=new Image();
+  cropImg.onload=()=>{
+    ctx.save();
+    if(_cropState.imgRot){
+      ctx.translate(200,300);
+      ctx.rotate(_cropState.imgRot*Math.PI/180);
+      ctx.translate(-200,-300);
+    }
+    ctx.drawImage(cropImg, sx, sy, sw, sh, 0, 0, 400, 600);
+    ctx.restore();
+    const result=canvas.toDataURL('image/jpeg',0.93);
+    document.getElementById('cropperModal')?.remove();
+    uploadCoverFromBase64(id, result);
+  };
+  cropImg.src=_cropState.origSrc;
+}
+
 
 async function enhanceCoverPhoto(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
@@ -3680,7 +3978,7 @@ function gdriveAutoSignIn(){
 function saveComic(andList=false){
   const getVal = id => { try{ return document.getElementById(id)?.value||''; }catch(e){ return ''; } };
   const title = getVal('i-title').trim();
-  if(!title){ alert('Title is required.'); return; }
+  if(!title){ toast('Title is required.','error');  return; }
   const img = document.getElementById('imgPreview')?.src||'';
   const c={
     id:editId||Date.now().toString(),
@@ -3711,7 +4009,7 @@ function saveComic(andList=false){
     }
   }catch(err){
     console.error('saveComic error:',err);
-    alert('Save failed: '+err.message);
+    toast('Save failed: '+err.message,'error');
   }
 }
 function saveAndList(){ saveComic(true); }
@@ -4581,7 +4879,7 @@ function genDesc(c){ const gl=GRADES[c.grade]?.l||c.grade||'Ungraded'; return `$
 function confirmListing(){
   const c=DB.comics.find(x=>x.id===sellId); if(!c) return;
   const plats=Array.from(document.querySelectorAll('#sellModal .plat-card.on')).map(el=>el.dataset.p);
-  if(!plats.length){ alert('Select at least one platform.'); return; }
+  if(!plats.length){ toast('Select at least one platform.','error');  return; }
   const price=document.getElementById('sl-price').value;
   DB.listings.push({id:Date.now().toString(),comicId:c.id,title:c.title,issue:c.issue,publisher:c.publisher,grade:c.grade,image:c.image,price,description:document.getElementById('sl-desc').value,platforms:plats,status:'active',listedAt:new Date().toISOString()});
   saveDB(); closeModal('sellModal'); renderCollection();
@@ -4674,9 +4972,9 @@ function refreshLotSelector(){
 
 function splitLotCost(){
   const price=parseFloat(document.getElementById('lot-price').value);
-  if(!price||price<=0){ alert('Enter the total lot price first.'); return; }
+  if(!price||price<=0){ toast('Enter the total lot price first.','error');  return; }
   const checkboxes=document.querySelectorAll('#lot-comic-select input[type=checkbox]:checked');
-  if(!checkboxes.length){ alert('Select at least one comic from the lot.'); return; }
+  if(!checkboxes.length){ toast('Select at least one comic from the lot.','error');  return; }
   const ids=[...checkboxes].map(cb=>cb.value);
   const perComic=(price/ids.length).toFixed(2);
   ids.forEach(id=>{
@@ -4960,7 +5258,7 @@ function filterCrossovers(q){
 async function runScan(){
   const q=document.getElementById('psScan').value.trim();
   const grade=document.getElementById('psGrade').value;
-  if(!q){ alert('Enter a comic title.'); return; }
+  if(!q){ toast('Enter a comic title.','error');  return; }
   const div=document.getElementById('psResults');
   div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Scanning prices…</div></div>`;
   try{
@@ -5006,7 +5304,7 @@ function openReceiptModal(){
 function saveReceipt(){
   const desc=document.getElementById('rc-desc').value.trim();
   const amt=document.getElementById('rc-amt').value;
-  if(!desc||!amt){ alert('Fill in description and amount.'); return; }
+  if(!desc||!amt){ toast('Fill in description and amount.','error');  return; }
   DB.receipts.push({id:Date.now().toString(),desc,amount:amt,date:document.getElementById('rc-date').value,category:document.getElementById('rc-cat').value,notes:document.getElementById('rc-notes').value,addedAt:new Date().toISOString()});
   saveDB(); closeModal('receiptModal'); renderTax();
 }
@@ -5106,7 +5404,7 @@ function renderReports(){
 //  BULK UPLOAD
 // ══════════════════════════════════
 function openBulk(){ document.getElementById('bulkQueue').innerHTML=''; document.getElementById('bulkActRow').style.display='none'; openModal('bulkModal'); }
-function openBulkList(){ if(!selected.size){ alert('Use Select mode in Collection to pick comics first, then use the bulk list here.'); return; } confirmBulkList(); }
+function openBulkList(){ if(!selected.size){ toast('Use Select mode in Collection to pick comics first.','error'); return; } confirmBulkList(); }
 function confirmBulkList(){
   const ids=Array.from(selected);
   if(!ids.length) return;
@@ -5244,7 +5542,7 @@ function loadApiKeys(){
 
 function saveApiKey(service, val){
   val=val.trim();
-  if(!val){ alert('Please enter a key.'); return; }
+  if(!val){ toast('Please enter a key.','error');  return; }
   apiKeys[service]=val;
   localStorage.setItem('cvp_apikeys',JSON.stringify(apiKeys));
   if(service==='comicvine'){
@@ -5875,7 +6173,12 @@ async function startScanner(){
   const startBtn=document.getElementById('scanStartBtn');
   const stopBtn=document.getElementById('scanStopBtn');
   try{
-    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
+    // Android Chrome works best with exact facingMode and no resolution constraints
+    const isAndroid=/android/i.test(navigator.userAgent);
+    const videoConstraints=isAndroid
+      ?{facingMode:{exact:'environment'}} // Android: exact rear camera, no resolution
+      :{facingMode:'environment',width:{ideal:1280},height:{ideal:720}};
+    const stream=await navigator.mediaDevices.getUserMedia({video:videoConstraints});
     scanStream=stream; video.srcObject=stream;
     viewport.style.display='block'; startBtn.style.display='none'; stopBtn.style.display='inline-flex';
     if(!window.ZXing) await loadScript('https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js');
@@ -5915,7 +6218,7 @@ try{ Object.assign(barcodeCache, JSON.parse(localStorage.getItem('cvp_barcode_ca
 
 async function lookupBarcode(barcode){
   barcode=(barcode||'').trim().replace(/\D/g,'');
-  if(!barcode||barcode.length<8){ alert('Need at least 8 digits. Check the number under the barcode.'); return; }
+  if(!barcode||barcode.length<8){ toast('Need at least 8 digits. Check the number under the barcode.','error');  return; }
   const resultDiv=document.getElementById('scanResult');
   const resultBody=document.getElementById('scanResultBody');
   resultDiv.style.display='block';
@@ -6286,8 +6589,8 @@ async function checkDeal(){
 
   if(dealMode === 'url'){
     const url = document.getElementById('deal-url').value.trim();
-    if(!url){ alert('Please paste a listing URL first.'); resultDiv.innerHTML=''; return; }
-    if(!url.startsWith('http')){ alert('Please paste a full URL starting with https://'); resultDiv.innerHTML=''; return; }
+    if(!url){ toast('Please paste a listing URL first.','error');  resultDiv.innerHTML=''; return; }
+    if(!url.startsWith('http')){ toast('Please paste a full URL starting with https://','error');  resultDiv.innerHTML=''; return; }
 
     // Detect if shortened URL
     if(url.includes('ebay.us/') || url.includes('/m/')){
@@ -6310,7 +6613,7 @@ async function checkDeal(){
     messages = [{role:'user',content:`Analyze this comic listing URL for deal quality.\n\nURL: ${url}\nPlatform: ${platform}\nPurpose: ${purpose}\n${budget?'Max budget: $'+budget:''}\n\n${buildDealPrompt(platform, purpose, budget)}`}];
 
   } else if(dealMode === 'photo'){
-    if(!dealPhotoData){ alert('Please upload a screenshot first.'); resultDiv.innerHTML=''; return; }
+    if(!dealPhotoData){ toast('Please upload a screenshot first.','error');  resultDiv.innerHTML=''; return; }
     const base64 = dealPhotoData.split(',')[1];
     const mtype = dealPhotoData.split(';')[0].split(':')[1];
     platform = 'eBay (screenshot)';
@@ -6326,7 +6629,7 @@ async function checkDeal(){
     const price = document.getElementById('deal-manual-price').value;
     const manPlatform = document.getElementById('deal-manual-platform').value.trim();
     const notes = document.getElementById('deal-manual-notes').value.trim();
-    if(!title||!price){ alert('Please enter at least the comic title and price.'); resultDiv.innerHTML=''; return; }
+    if(!title||!price){ toast('Please enter at least the comic title and price.','error');  resultDiv.innerHTML=''; return; }
     platform = manPlatform || 'Unknown';
     displayUrl = 'manual';
     messages = [{role:'user',content:`Comic listing details entered manually:\n\nComic: ${title}\nCondition/Grade: ${grade||'Not specified'}\nAsking price: $${price}\nPlatform: ${platform}\nAdditional notes: ${notes||'None'}\nPurpose: ${purpose}\n${budget?'Max budget: $'+budget:''}\n\n${buildDealPrompt(platform,purpose,budget)}`}];
@@ -6545,7 +6848,7 @@ async function runComicFinder(){
   const budget=document.getElementById('finder-budget').value;
   const purpose=document.getElementById('finder-purpose').value;
   const markets=document.getElementById('finder-markets').value;
-  if(!q){ alert('Enter a comic title to search.'); return; }
+  if(!q){ toast('Enter a comic title to search.','error');  return; }
 
   const div=document.getElementById('finderResults');
   div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Searching ${markets==='all'?'all platforms':markets}…</div></div>`;
@@ -6690,7 +6993,7 @@ async function findSpecific(encQ){
 }
 
 async function findAllWantList(){
-  if(!DB.wantList.length){ alert('Want list is empty.'); return; }
+  if(!DB.wantList.length){ toast('Want list is empty.','error');  return; }
   const div=document.getElementById('wantListFinderResults');
   div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Searching for all ${DB.wantList.length} want list items…</div></div>`;
 
@@ -6725,11 +7028,11 @@ function addPriceAlert(){
   const title=document.getElementById('alert-title').value.trim();
   const price=document.getElementById('alert-price').value;
   const grade=document.getElementById('alert-grade').value;
-  if(!title||!price){ alert('Fill in title and target price.'); return; }
+  if(!title||!price){ toast('Fill in title and target price.','error');  return; }
   priceAlerts.push({id:Date.now().toString(),title,targetPrice:parseFloat(price),grade,createdAt:new Date().toISOString(),triggered:false});
   saveFinderData(); renderAlerts();
   document.getElementById('alert-title').value=''; document.getElementById('alert-price').value='';
-  alert(`🔔 Alert set! You'll be notified when ${title} drops below $${price}`);
+  toast(`🔔 Alert set for ${title} below $${price}`,'success',3000);
 }
 
 function renderAlerts(){
@@ -6789,7 +7092,7 @@ async function findLots(){
   const goal=document.getElementById('lot-goal').value;
   const era=document.getElementById('lot-era').value;
   const minBooks=document.getElementById('lot-minbooks').value||'1';
-  if(!q){ alert('Describe the type of lot you want.'); return; }
+  if(!q){ toast('Describe the type of lot you want.','error');  return; }
 
   const div=document.getElementById('lotResults');
   div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Searching for lots & collections…</div></div>`;
@@ -6861,7 +7164,7 @@ function analyzeLotFromResult(encData){
 async function analyzeLot(){
   const listing=document.getElementById('lot-paste').value.trim();
   const asking=document.getElementById('lot-asking').value;
-  if(!listing){ alert('Paste a listing description first.'); return; }
+  if(!listing){ toast('Paste a listing description first.','error');  return; }
 
   const div=document.getElementById('lotAnalysis');
   div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Analyzing lot…</div></div>`;
@@ -6993,7 +7296,7 @@ async function runRvGCalc(){
   const comicId=document.getElementById('rvg-comic').value;
   const comic=DB.comics.find(x=>x.id===comicId);
 
-  if(!rawVal){ alert('Enter the raw sale value first.'); return; }
+  if(!rawVal){ toast('Enter the raw sale value first.','error');  return; }
 
   const div=document.getElementById('rvgResult');
   div.style.display='block';
@@ -7099,7 +7402,7 @@ function scrollToSellSection(type){
 
 // ── SELL MODE SORTER ENGINE ──
 async function runSellModeSorter(){
-  if(!DB.comics.length){ alert('Add some comics to your collection first.'); return; }
+  if(!DB.comics.length){ toast('Add some comics to your collection first.','error');  return; }
 
   const btn=document.getElementById('sellModeBtn');
   const resultsDiv=document.getElementById('sellModeResults');
@@ -7242,7 +7545,7 @@ function addToLotGroup(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   // Visual feedback — mark the row
   const rows=document.querySelectorAll('#sms-section-lot .btn');
-  alert(`📦 "${c.title} #${c.issue||'?'}" noted for lot. When ready, use the Listing Packages tab → Facebook Marketplace or eBay to build a full lot description.`);
+  toast(`📦 ${c.title} added to lot`,'info',3000);
 }
 
 function populatePublishDropdowns(){
@@ -7318,7 +7621,7 @@ function openEbayListing(c){
 async function generateListingPackage(){
   const id=document.getElementById('pkg-comic').value;
   const platform=document.getElementById('pkg-platform').value;
-  if(!id){ alert('Select a comic first.'); return; }
+  if(!id){ toast('Select a comic first.','error');  return; }
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   const div=document.getElementById('pkgResult');
   div.innerHTML=`<div class="spin-wrap"><div class="spin"></div><div class="pulse-txt">Generating ${platform} package…</div></div>`;
@@ -7347,8 +7650,8 @@ async function generateListingPackage(){
 function copyToClipboard(id){
   const el=document.getElementById(id);
   if(!el) return;
-  navigator.clipboard.writeText(el.textContent||el.innerText).then(()=>alert('📋 Copied to clipboard!')).catch(()=>{
-    const ta=document.createElement('textarea'); ta.value=el.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); alert('📋 Copied!');
+  navigator.clipboard.writeText(el.textContent||el.innerText).then(()=>toast('📋 Copied!')).catch(()=>{
+    const ta=document.createElement('textarea'); ta.value=el.textContent; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); toast('📋 Copied!');
   });
 }
 
@@ -7579,7 +7882,7 @@ function importFromPaste(){
     document.getElementById('pasteImportModal')?.remove();
     toast(`✅ Imported ${data.comics.length} comics!`,'success',3000);
   }catch(err){
-    alert('Import failed: '+err.message+'\n\nMake sure you copied the full backup from Export → Copy to Clipboard.');
+    toast('Import failed: '+err.message,'error',5000);
   }
 }
 
@@ -7603,7 +7906,7 @@ function importData(input){
       DB.wantList=merge(DB.wantList,data.wantList);
       saveDB(); renderCollection(); updateStats();
       toast(`✅ Imported ${data.comics.length} comics`);
-    }catch(err){ alert('Import failed: '+err.message); }
+    }catch(err){ toast('Import failed: '+err.message,'error'); }
   };
   r.readAsText(file);
 }
@@ -7613,7 +7916,7 @@ function clearAllData(){
   if(!confirm('Last chance — this cannot be undone. Delete everything?')) return;
   DB={comics:[],listings:[],sold:[],receipts:[],wantList:[]};
   saveDB(); renderCollection(); updateStats();
-  alert('All data cleared.');
+  toast('All data cleared.','info');
 }
 
 </script>
