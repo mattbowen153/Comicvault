@@ -2252,10 +2252,13 @@ setTimeout(checkForRecovery, 600);
   }
 
   // Fix 2: Prevent double-tap zoom on buttons (Android Chrome)
+  // Only preventDefault — don't call click() or it fires twice
+  let _lastTap=0;
   document.addEventListener('touchend',e=>{
     if(e.target.tagName==='BUTTON'||e.target.closest('button')){
-      e.preventDefault();
-      e.target.click?.();
+      const now=Date.now();
+      if(now-_lastTap<300){ e.preventDefault(); } // only block actual double-taps
+      _lastTap=now;
     }
   },{passive:false});
 
@@ -3105,11 +3108,14 @@ function fixCover(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   const existing=document.getElementById('fixCoverModal');
   if(existing) existing.remove();
-
   const modal=document.createElement('div');
   modal.id='fixCoverModal';
   modal.className='modal-bg';
   modal.style.cssText='display:flex';
+  const enc=encodeURIComponent;
+  const googleImgUrl=`https://www.google.com/search?tbm=isch&q=${enc(c.title+' '+cleanIssue(c.issue)+' '+(c.publisher||'')+' comic cover')}`;
+  const cvSearchUrl=`https://comicvine.gamespot.com/search/?query=${enc(c.title+' '+cleanIssue(c.issue))}`;
+  const variantUrl=`https://www.google.com/search?tbm=isch&q=${enc(c.title+' '+cleanIssue(c.issue)+' variant cover')}`;
   modal.innerHTML=`
     <div class="modal" style="max-width:460px">
       <div class="modal-hdr">
@@ -3117,52 +3123,77 @@ function fixCover(id){
         <button class="modal-x" onclick="document.getElementById('fixCoverModal').remove()">✕</button>
       </div>
       <div class="modal-body" style="display:flex;flex-direction:column;gap:.8rem">
-
         <div style="font-size:.8rem;color:var(--dim)">
           <strong style="color:var(--paper)">${c.title} #${cleanIssue(c.issue)}</strong>
-          ${c.publisher?`<span style="color:var(--dim)"> · ${c.publisher}</span>`:''}
+          ${c.publisher?`<span> · ${c.publisher}</span>`:''}
         </div>
 
-        <!-- PRIMARY: Photo editor -->
-        <div style="background:rgba(74,222,128,.06);border:2px solid rgba(74,222,128,.3);border-radius:6px;padding:.8rem">
-          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;color:var(--green);margin-bottom:.3rem">📷 Take Photo → Drag to Crop</div>
-          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">
-            Take a photo of the comic cover. A crop tool appears — drag the corners to frame just the cover, then tap <strong style="color:var(--paper2)">Use This</strong>.
+        <!-- OPTION 1: Paste URL — easiest and most reliable -->
+        <div style="background:rgba(74,222,128,.06);border:2px solid rgba(74,222,128,.4);border-radius:6px;padding:.8rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.9rem;color:var(--green);margin-bottom:.2rem">🔗 Paste Image URL — Most Reliable</div>
+          <div style="font-size:.74rem;color:var(--dim);margin-bottom:.6rem;line-height:1.6">
+            1. Tap a link below to find the cover<br>
+            2. Long-press the correct image<br>
+            3. Tap <strong style="color:var(--paper2)">Copy image address</strong><br>
+            4. Come back and paste it here
           </div>
+          <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:.6rem">
+            <a href="${googleImgUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">🔍 Google Images</a>
+            <a href="${cvSearchUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">📚 Comic Vine</a>
+            <a href="${variantUrl}" target="_blank" class="btn btn-ghost btn-sm" style="font-size:.72rem;text-decoration:none">🎨 Variants</a>
+          </div>
+          <div style="display:flex;gap:.5rem">
+            <input class="fi" id="coverUrlInput" placeholder="Paste image URL here…" style="flex:1;margin-bottom:0;font-size:14px">
+            <button class="btn btn-gold" style="font-weight:700;white-space:nowrap" onclick="applyUrlCover('${id}')">✅ Use It</button>
+          </div>
+        </div>
+
+        <!-- OPTION 2: Barcode scan -->
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:.8rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.88rem;color:var(--paper2);margin-bottom:.2rem">📊 Scan Barcode (Back of Comic)</div>
+          <div style="font-size:.74rem;color:var(--dim);margin-bottom:.5rem">Finds the exact edition including variants.</div>
+          <input type="file" id="barcodePhotoForCover" accept="image/*" capture="environment" style="display:none" onchange="scanBarcodeForCover('${id}',this)">
+          <div style="display:flex;gap:.5rem">
+            <button class="btn btn-primary" style="flex:1" onclick="document.getElementById('barcodePhotoForCover').click()">📷 Scan Barcode</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="showManualBarcode('${id}')">⌨️ Type Barcode</button>
+          </div>
+          <div id="barcodeStatus" style="font-size:.74rem;color:var(--dim);display:none;margin-top:.4rem;padding:.4rem;background:rgba(255,255,255,.03);border-radius:4px"></div>
+        </div>
+
+        <!-- OPTION 3: Take photo + AI crop -->
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:.8rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.88rem;color:var(--paper2);margin-bottom:.2rem">📷 Photo of Cover</div>
+          <div style="font-size:.74rem;color:var(--dim);margin-bottom:.5rem">AI detects and crops the comic out of the photo.</div>
           <input type="file" id="coverCropInput" accept="image/*" capture="environment" style="display:none" onchange="openCoverCropper('${id}',this)">
           <div style="display:flex;gap:.5rem">
-            <button class="btn btn-primary" style="flex:1;background:var(--green);border-color:var(--green);color:#000;font-weight:700" onclick="document.getElementById('coverCropInput').click()">📷 Take Photo</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('coverCropInput').click()">📷 Take Photo</button>
             <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('coverCropInput').removeAttribute('capture');document.getElementById('coverCropInput').click()">🖼️ Camera Roll</button>
           </div>
-        </div>
-
-        <!-- SECONDARY: Search by title -->
-        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:.8rem">
-          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--paper2);margin-bottom:.3rem">🔍 Search Comic Vine</div>
-          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.5rem">Searches Comic Vine's database. Works best with Comic Vine API key in Settings.</div>
-          <div style="display:flex;gap:.5rem">
-            <input class="fi" id="coverSearchInput" value="${c.title}" style="flex:1;margin-bottom:0">
-            <button class="btn btn-primary" onclick="searchCoversForFix('${id}')">Search</button>
-          </div>
-          <div id="coverSearchStatus" style="font-size:.72rem;color:var(--dim);margin-top:.4rem"></div>
         </div>
 
         <!-- Current cover -->
         ${(c.coverUrl||c.drivePhotoUrl||c.image)?`
         <div style="display:flex;align-items:center;gap:.8rem;padding:.6rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px">
-          <img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:55px;height:82px;object-fit:cover;border:1px solid var(--border);flex-shrink:0;border-radius:2px" onerror="this.style.display='none'">
-          <div style="flex:1">
-            <div style="font-size:.72rem;color:var(--dim);margin-bottom:.4rem">Current cover</div>
+          <img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:50px;height:75px;object-fit:cover;border:1px solid var(--border);flex-shrink:0;border-radius:2px" onerror="this.style.display='none'">
+          <div>
+            <div style="font-size:.72rem;color:var(--dim);margin-bottom:.3rem">Current cover</div>
             <button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="clearCover('${id}')">✕ Remove</button>
           </div>
         </div>`:''}
 
-        <!-- Search results -->
-        <div id="coverSearchResults" style="max-height:300px;overflow-y:auto"></div>
+        <div id="coverSearchResults" style="max-height:260px;overflow-y:auto"></div>
       </div>
     </div>`;
   document.body.appendChild(modal);
+  setTimeout(()=>document.getElementById('coverUrlInput')?.focus(),300);
 }
+
+function applyUrlCover(id){
+  const url=document.getElementById('coverUrlInput')?.value?.trim();
+  if(!url||!url.startsWith('http')){ toast('Paste a valid image URL starting with https://','error'); return; }
+  applyCoverFix(id, url);
+}
+
 
 async function scanBarcodeForCover(id, input){
   const file=input.files[0]; if(!file) return;
