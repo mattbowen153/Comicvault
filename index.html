@@ -3044,10 +3044,22 @@ function fixCover(id){
           ${c.publisher?`<span style="color:var(--dim)"> · ${c.publisher}</span>`:''}
         </div>
 
-        <!-- OPTION 1: Take/upload photo — AI identifies it -->
+        <!-- OPTION 1: Scan barcode — most accurate -->
+        <div style="background:rgba(74,222,128,.06);border:2px solid rgba(74,222,128,.3);border-radius:6px;padding:.8rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--green);margin-bottom:.3rem">📊 Most Accurate — Scan the Barcode</div>
+          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">Flip the comic over and scan the barcode on the back. This finds the <strong style="color:var(--paper2)">exact edition and variant</strong>.</div>
+          <input type="file" id="barcodePhotoForCover" accept="image/*" capture="environment" style="display:none" onchange="scanBarcodeForCover('${id}',this)">
+          <div style="display:flex;gap:.5rem;margin-bottom:.4rem">
+            <button class="btn btn-primary" style="flex:1;background:var(--green);border-color:var(--green);color:#000" onclick="document.getElementById('barcodePhotoForCover').click()">📷 Scan Barcode</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="showManualBarcode('${id}')">⌨️ Enter Manually</button>
+          </div>
+          <div id="barcodeStatus" style="font-size:.75rem;color:var(--dim);display:none"></div>
+        </div>
+
+        <!-- OPTION 2: Photograph cover — AI identifies -->
         <div style="background:rgba(255,214,10,.06);border:1px solid rgba(255,214,10,.25);border-radius:6px;padding:.8rem">
-          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);margin-bottom:.3rem">📷 Best Option — Photograph the Cover</div>
-          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">Take a photo or pick from camera roll. AI reads the cover and finds the exact match automatically.</div>
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);margin-bottom:.3rem">📷 Photograph the Cover</div>
+          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">AI reads the cover and searches for the matching image.</div>
           <input type="file" id="coverPhotoForAI" accept="image/*" capture="environment" style="display:none" onchange="identifyAndFixCover('${id}',this)">
           <div style="display:flex;gap:.5rem">
             <button class="btn btn-gold" style="flex:1" onclick="document.getElementById('coverPhotoForAI').click()">📷 Take Photo</button>
@@ -3056,35 +3068,183 @@ function fixCover(id){
           <div id="coverAIStatus" style="font-size:.75rem;color:var(--dim);margin-top:.5rem;display:none"></div>
         </div>
 
-        <!-- OPTION 2: Search by title -->
+        <!-- OPTION 3: Search by title -->
         <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:.8rem">
           <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--paper2);margin-bottom:.3rem">🔍 Search by Title</div>
-          <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
+          <div style="display:flex;gap:.5rem;margin-bottom:.4rem">
             <input class="fi" id="coverSearchInput" value="${c.title}" style="flex:1;margin-bottom:0">
             <button class="btn btn-primary" onclick="searchCoversForFix('${id}')">Search</button>
           </div>
-          <div style="font-size:.7rem;color:var(--dim)">Tip: search just the title without the issue number for more results</div>
+          <div style="font-size:.7rem;color:var(--dim)">Tip: search just the title without issue number</div>
         </div>
 
         <!-- Current cover -->
         ${(c.coverUrl||c.drivePhotoUrl||c.image)?`
         <div style="display:flex;align-items:center;gap:.8rem;padding:.6rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px">
-          <img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:55px;height:82px;object-fit:cover;border:1px solid var(--border);flex-shrink:0;border-radius:2px" onerror="this.style.display='none'" id="currentCoverThumb">
+          <img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:55px;height:82px;object-fit:cover;border:1px solid var(--border);flex-shrink:0;border-radius:2px" onerror="this.style.display='none'">
           <div style="flex:1;min-width:0">
-            <div style="font-size:.72rem;color:var(--dim);margin-bottom:.4rem">Current cover — looks like a hand photo?</div>
-            <button class="btn btn-gold btn-sm" style="width:100%;margin-bottom:.3rem" onclick="enhanceCoverPhoto('${id}')">✨ AI Enhance This Photo</button>
+            <div style="font-size:.72rem;color:var(--dim);margin-bottom:.4rem">Current cover</div>
             <button class="btn btn-ghost btn-sm" style="font-size:.7rem;width:100%" onclick="clearCover('${id}')">✕ Remove</button>
           </div>
         </div>`:''}
 
         <!-- Results -->
-        <div id="coverSearchResults" style="max-height:280px;overflow-y:auto"></div>
+        <div id="coverSearchResults" style="max-height:300px;overflow-y:auto"></div>
       </div>
     </div>`;
   document.body.appendChild(modal);
+}
 
-  // Auto-search immediately
-  searchCoversForFix(id);
+async function scanBarcodeForCover(id, input){
+  const file=input.files[0]; if(!file) return;
+  const status=document.getElementById('barcodeStatus');
+  const resultsDiv=document.getElementById('coverSearchResults');
+  if(status){ status.style.display='block'; status.textContent='🔍 Reading barcode…'; }
+
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    const base64=e.target.result;
+
+    // Use AI to read the barcode from the image
+    if(!apiKeys.anthropic){
+      if(status) status.textContent='⚠ Anthropic key needed to read barcode from photo. Use Enter Manually instead.';
+      return;
+    }
+
+    try{
+      const res=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:anthropicHeaders(),
+        body:JSON.stringify({
+          model:'claude-sonnet-4-20250514',
+          max_tokens:100,
+          messages:[{role:'user',content:[
+            {type:'image',source:{type:'base64',media_type:file.type,data:base64.split(',')[1]}},
+            {type:'text',text:`Read the barcode number from this image. Comic barcodes are typically 12-13 digits.
+Return ONLY the digits, nothing else. Example: 759606202891
+If you cannot read a clear barcode, return: NONE`}
+          ]}]
+        })
+      });
+      const data=await res.json();
+      const barcode=(data.content||[]).map(b=>b.text||'').join('').trim().replace(/\D/g,'');
+
+      if(!barcode||barcode==='NONE'||barcode.length<5){
+        if(status) status.textContent='❌ Could not read barcode. Try again in better light, or use Enter Manually.';
+        return;
+      }
+
+      if(status) status.textContent=`✅ Barcode: ${barcode} — searching…`;
+      await lookupBarcodeForCover(id, barcode, status);
+
+    }catch(e){
+      if(status) status.textContent='❌ Failed to read barcode. Try Enter Manually.';
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function showManualBarcode(id){
+  const existing=document.getElementById('manualBarcodeModal');
+  if(existing) existing.remove();
+  const modal=document.createElement('div');
+  modal.id='manualBarcodeModal';
+  modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:1.5rem';
+  modal.innerHTML=`
+    <div style="background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:1.2rem;width:100%;max-width:380px">
+      <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--green);margin-bottom:.6rem">⌨️ Enter Barcode Manually</div>
+      <div style="font-size:.78rem;color:var(--dim);margin-bottom:.8rem">
+        Find the barcode on the <strong style="color:var(--paper2)">back cover</strong> of your comic. It's usually a 12-digit number under the barcode stripes. Type or paste it below.
+      </div>
+      <input class="fi" id="manualBarcodeInput" type="number" placeholder="e.g. 759606202891" style="margin-bottom:.8rem;font-size:1rem">
+      <div style="display:flex;gap:.6rem">
+        <button class="btn btn-primary" style="flex:1;background:var(--green);border-color:var(--green);color:#000" onclick="submitManualBarcode('${id}')">🔍 Look Up Cover</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('manualBarcodeModal').remove()">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  setTimeout(()=>document.getElementById('manualBarcodeInput')?.focus(),100);
+}
+
+async function submitManualBarcode(id){
+  const val=document.getElementById('manualBarcodeInput')?.value?.trim().replace(/\D/g,'');
+  if(!val||val.length<5){ toast('Enter a valid barcode number','error'); return; }
+  document.getElementById('manualBarcodeModal')?.remove();
+  const status=document.getElementById('barcodeStatus');
+  if(status){ status.style.display='block'; status.textContent=`🔍 Looking up barcode ${val}…`; }
+  await lookupBarcodeForCover(id, val, status);
+}
+
+async function lookupBarcodeForCover(id, barcode, status){
+  const c=DB.comics.find(x=>x.id===id);
+  const resultsDiv=document.getElementById('coverSearchResults');
+  const allCovers=[];
+
+  // Save barcode to comic record
+  const idx=DB.comics.findIndex(x=>x.id===id);
+  if(idx!==-1){ DB.comics[idx].barcode=barcode; saveDB(); }
+
+  // Source 1: UPC Item DB
+  try{
+    const res=await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`,{signal:AbortSignal.timeout(5000)});
+    if(res.ok){
+      const d=await res.json();
+      (d.items||[]).forEach(item=>{
+        (item.images||[]).forEach(img=>{
+          if(img.startsWith('http')) allCovers.push({url:img,label:item.title||barcode,source:'📦 UPC Database (exact)'});
+        });
+        // Update title/publisher from barcode data if better
+        if(item.title&&idx!==-1&&!DB.comics[idx].title){
+          DB.comics[idx].title=item.title;
+        }
+      });
+    }
+  }catch(e){}
+
+  // Source 2: Comic Vine barcode lookup (most accurate for comics)
+  if(apiKeys.comicvine){
+    try{
+      const cvUrl=`https://comicvine.gamespot.com/api/issues/?api_key=${apiKeys.comicvine}&format=json&filter=upc:${barcode}&field_list=image,name,issue_number,volume,cover_date`;
+      const proxies=[
+        `https://corsproxy.io/?${encodeURIComponent(cvUrl)}`,
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(cvUrl)}`,
+      ];
+      for(const proxy of proxies){
+        try{
+          const res=await fetch(proxy,{signal:AbortSignal.timeout(6000)});
+          if(!res.ok) continue;
+          const data=JSON.parse(await res.text());
+          if(data.results?.length){
+            data.results.forEach(r=>{
+              if(r.image?.super_url) allCovers.push({url:r.image.super_url,label:`${r.volume?.name||''} #${r.issue_number} (exact barcode)`,source:'🎯 Comic Vine (barcode)'});
+              if(r.image?.medium_url) allCovers.push({url:r.image.medium_url,label:`${r.volume?.name||''} #${r.issue_number}`,source:'Comic Vine'});
+              // Update comic data from Comic Vine
+              if(idx!==-1){
+                if(r.volume?.name) DB.comics[idx].title=r.volume.name;
+                if(r.issue_number) DB.comics[idx].issue=r.issue_number;
+                if(r.cover_date) DB.comics[idx].year=r.cover_date.split('-')[0];
+                saveDB(); renderCollection();
+              }
+            });
+            break;
+          }
+        }catch(e){ continue; }
+      }
+    }catch(e){}
+  }
+
+  // Source 3: Fall back to title search if barcode found nothing
+  if(!allCovers.length && c?.title){
+    if(status) status.textContent='Barcode lookup empty — searching by title…';
+    const titleCovers=await findCoverImages(c.title, c.issue, c.publisher, c.variant, barcode);
+    allCovers.push(...titleCovers);
+  }
+
+  if(status) status.textContent=allCovers.length
+    ? `✅ Found ${allCovers.length} covers for barcode ${barcode}`
+    : `⚠ No covers found for barcode ${barcode} — try searching by title below`;
+
+  showCoverResults(id, allCovers);
 }
 
 async function enhanceCoverPhoto(id){
