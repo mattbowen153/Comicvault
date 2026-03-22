@@ -2134,6 +2134,21 @@ function restoreAutoBackup(){
 
 loadDB();
 
+// Fix: if comic has a Drive photo, clear any wrong coverUrl so Drive photo shows
+// This fixes comics that got the wrong Comic Vine cover before this fix
+(function fixCoverPriority(){
+  try{
+    let changed=false;
+    DB.comics.forEach((c,i)=>{
+      if(c.drivePhotoUrl && c.coverUrl){
+        DB.comics[i].coverUrl=''; // Drive photo wins
+        changed=true;
+      }
+    });
+    if(changed) saveDB();
+  }catch(e){}
+})();
+
 // One-time cleanup: strip base64 images from localStorage to free space
 // This runs once on load to fix the quota exceeded error
 (function cleanupStorage(){
@@ -2270,7 +2285,7 @@ function renderCollection(){
     const recTxt=c.rec==='hold'?'📌 Hold':c.rec==='sell'?'🏷️ Sell':'';
     return `<div class="comic-card${isSel?' sel':''}" onclick="cardClick('${c.id}')" style="${isSel?'outline:2px solid var(--gold)':''}">
       <div class="card-img">
-        ${(c.coverUrl||c.drivePhotoUrl||(c.image&&!c.image.startsWith('data:')))?`<img src="${c.coverUrl||c.drivePhotoUrl||c.image}" alt="${c.title}">`:`<div class="card-ph"><span style="font-size:.65rem;font-family:'Barlow Condensed';font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--dim);text-align:center;padding:.5rem">${c.publisher||'?'}</span></div>`}
+        ${(c.drivePhotoUrl||c.image||(c.image&&!c.image.startsWith('data:'))||c.coverUrl)?`<img src="${c.drivePhotoUrl||c.image||c.coverUrl}" alt="${c.title}">`:`<div class="card-ph"><span style="font-size:.65rem;font-family:'Barlow Condensed';font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--dim);text-align:center;padding:.5rem">${c.publisher||'?'}</span></div>`}
         ${c.grade?`<div class="grade-pip ${gc(c.grade)}">${c.grade}</div>`:''}
         ${isListed?'<div class="sale-ribbon">For Sale</div>':c.rec==='hold'?'<div class="hold-ribbon">Hold</div>':''}
         ${!selectMode?`<div class="card-hover">
@@ -2308,7 +2323,8 @@ async function autoFetchMissingCovers(){
   // Only fetch if comic has no cover at all AND hasn't been attempted before
   const missing = DB.comics.filter(c =>
     !c.coverUrl &&
-    !c.coverAttempted && // never tried before
+    !c.drivePhotoUrl && // has no Drive photo either
+    !c.coverAttempted &&
     !(c.image && !c.image.startsWith('data:'))
   );
   if(!missing.length) return;
@@ -5403,6 +5419,7 @@ function addAndGradeFromCover(d){
   saveDB(); renderCollection(); updateStats();
 
   // Upload photo to Google Drive in background (if signed in)
+  // Your scan photo is used as the card image — it's the actual cover you have
   if(gdriveToken && coverSrc && coverSrc.startsWith('data:')){
     gdriveUploadPhoto(c.id, c.title, c.issue, coverSrc).then(result=>{
       if(result){
@@ -5410,16 +5427,17 @@ function addAndGradeFromCover(d){
         if(idx!==-1){
           DB.comics[idx].drivePhotoUrl=result.url;
           DB.comics[idx].driveFileId=result.fileId;
-          DB.comics[idx].image=''; // clear local base64 — Drive has it now
+          DB.comics[idx].image='';
           saveDB(); renderCollection();
-          toast('☁️ Photo saved to Google Drive','info',2000);
         }
       }
     }).catch(()=>{});
   }
 
-  // Immediately try to fetch a clean cover from Comic Vine
-  if(apiKeys.comicvine && c.title){
+  // Only fetch Comic Vine cover if we have NO photo at all
+  // If we have a scan photo, skip — it shows the actual comic you own (including variants)
+  const hasPhoto = coverSrc && coverSrc.startsWith('data:');
+  if(!hasPhoto && apiKeys.comicvine && c.title){
     fetchComicVineCover(c.title, c.issue, c.publisher).then(img=>{
       if(img){
         const idx=DB.comics.findIndex(x=>x.id===c.id);
@@ -5432,6 +5450,10 @@ function addAndGradeFromCover(d){
         }
       }
     }).catch(()=>{});
+  } else if(hasPhoto){
+    // Mark as attempted so autoFetch doesn't overwrite with wrong cover later
+    const idx=DB.comics.findIndex(x=>x.id===c.id);
+    if(idx!==-1){ DB.comics[idx].coverAttempted=true; saveDB(); }
   }
 
   const saved = localStorage.getItem('cvp2');
