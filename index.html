@@ -2936,115 +2936,199 @@ function fixCover(id){
   modal.className='modal-bg';
   modal.style.cssText='display:flex';
   modal.innerHTML=`
-    <div class="modal" style="max-width:420px">
+    <div class="modal" style="max-width:440px">
       <div class="modal-hdr">
         <div class="modal-title">🖼️ Fix Cover Art</div>
         <button class="modal-x" onclick="document.getElementById('fixCoverModal').remove()">✕</button>
       </div>
-      <div class="modal-body">
-        <div style="font-size:.8rem;color:var(--dim);margin-bottom:.8rem">
-          Searching cover art for <strong style="color:var(--paper)">${c.title} #${cleanIssue(c.issue)}</strong>
-          ${c.publisher?` <span style="color:var(--dim)">(${c.publisher})</span>`:''}
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:.8rem">
+
+        <div style="font-size:.8rem;color:var(--dim)">
+          Fixing cover for <strong style="color:var(--paper)">${c.title} #${cleanIssue(c.issue)}</strong>
+          ${c.publisher?`<span style="color:var(--dim)"> · ${c.publisher}</span>`:''}
+        </div>
+
+        <!-- OPTION 1: Take/upload photo — AI identifies it -->
+        <div style="background:rgba(255,214,10,.06);border:1px solid rgba(255,214,10,.25);border-radius:6px;padding:.8rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--gold);margin-bottom:.3rem">📷 Best Option — Photograph the Cover</div>
+          <div style="font-size:.75rem;color:var(--dim);margin-bottom:.6rem">Take a photo or pick from camera roll. AI reads the cover and finds the exact match automatically.</div>
+          <input type="file" id="coverPhotoForAI" accept="image/*" capture="environment" style="display:none" onchange="identifyAndFixCover('${id}',this)">
+          <div style="display:flex;gap:.5rem">
+            <button class="btn btn-gold" style="flex:1" onclick="document.getElementById('coverPhotoForAI').click()">📷 Take Photo</button>
+            <button class="btn btn-ghost" style="flex:1" onclick="document.getElementById('coverPhotoForAI').removeAttribute('capture');document.getElementById('coverPhotoForAI').click()">🖼️ Camera Roll</button>
+          </div>
+          <div id="coverAIStatus" style="font-size:.75rem;color:var(--dim);margin-top:.5rem;display:none"></div>
+        </div>
+
+        <!-- OPTION 2: Search by title -->
+        <div style="background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:6px;padding:.8rem">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:.85rem;color:var(--paper2);margin-bottom:.3rem">🔍 Search by Title</div>
+          <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
+            <input class="fi" id="coverSearchInput" value="${c.title}" style="flex:1;margin-bottom:0">
+            <button class="btn btn-primary" onclick="searchCoversForFix('${id}')">Search</button>
+          </div>
+          <div style="font-size:.7rem;color:var(--dim)">Tip: search just the title without the issue number for more results</div>
         </div>
 
         <!-- Current cover -->
-        ${c.coverUrl||c.image?`
-        <div style="margin-bottom:.8rem">
-          <div style="font-size:.7rem;letter-spacing:1.5px;color:var(--dim);font-family:'Barlow Condensed';margin-bottom:.3rem">CURRENT COVER</div>
-          <div style="display:flex;align-items:center;gap:.8rem">
-            <img src="${c.coverUrl||c.image}" style="width:50px;height:75px;object-fit:cover;border:1px solid var(--border)">
-            <div>
-              <div style="font-size:.76rem;color:var(--paper2)">This is what shows on your cards</div>
-              <button class="btn btn-ghost btn-sm" style="margin-top:.3rem;font-size:.72rem" onclick="clearCover('${id}')">✕ Remove this cover</button>
-            </div>
+        ${(c.coverUrl||c.drivePhotoUrl||c.image)?`
+        <div style="display:flex;align-items:center;gap:.8rem;padding:.6rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px">
+          <img src="${c.coverUrl||c.drivePhotoUrl||c.image}" style="width:45px;height:67px;object-fit:cover;border:1px solid var(--border);flex-shrink:0" onerror="this.style.display='none'">
+          <div style="flex:1;min-width:0">
+            <div style="font-size:.72rem;color:var(--dim);margin-bottom:.3rem">Current cover</div>
+            <button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="clearCover('${id}')">✕ Remove</button>
           </div>
         </div>`:''}
 
-        <!-- Search -->
-        <div style="margin-bottom:.6rem">
-          <label class="fl">Search for correct cover</label>
-          <div style="display:flex;gap:.5rem">
-            <input class="fi" id="coverSearchInput" placeholder="${c.title} ${cleanIssue(c.issue)} ${c.publisher||''}" style="flex:1">
-            <button class="btn btn-primary" onclick="searchCoversForFix('${id}')">Search</button>
-          </div>
-        </div>
-
-        <!-- Upload your own -->
-        <div style="margin-bottom:.8rem;padding:.6rem .8rem;background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:4px">
-          <div style="font-size:.76rem;color:var(--paper2);margin-bottom:.4rem">📷 Or upload your own cover photo</div>
-          <input type="file" id="coverUploadInput" accept="image/*" style="display:none" onchange="uploadCoverForFix('${id}',this)">
-          <button class="btn btn-ghost btn-sm" style="width:100%" onclick="document.getElementById('coverUploadInput').click()">⬆ Upload Photo from Camera Roll</button>
-        </div>
-
         <!-- Results -->
-        <div id="coverSearchResults" style="max-height:300px;overflow-y:auto"></div>
+        <div id="coverSearchResults" style="max-height:280px;overflow-y:auto"></div>
       </div>
     </div>`;
   document.body.appendChild(modal);
 
-  // Auto-search immediately with title+publisher
-  const q=`${c.title} ${cleanIssue(c.issue)} ${c.publisher||''}`.trim();
-  document.getElementById('coverSearchInput').value=q;
+  // Auto-search immediately
   searchCoversForFix(id);
+}
+
+async function identifyAndFixCover(id, input){
+  const file=input.files[0]; if(!file) return;
+  const status=document.getElementById('coverAIStatus');
+  const resultsDiv=document.getElementById('coverSearchResults');
+  if(status){ status.style.display='block'; status.textContent='🤖 AI reading cover…'; }
+
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    const base64=e.target.result;
+
+    // Option A: If no Anthropic key, just use the photo directly as cover
+    if(!apiKeys.anthropic){
+      uploadCoverFromBase64(id, base64);
+      return;
+    }
+
+    try{
+      // Use AI vision to identify the exact comic and find a clean cover URL
+      const res=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:anthropicHeaders(),
+        body:JSON.stringify({
+          model:'claude-sonnet-4-20250514',
+          max_tokens:600,
+          messages:[{role:'user',content:[
+            {type:'image',source:{type:'base64',media_type:file.type,data:base64.split(',')[1]}},
+            {type:'text',text:`This is a photo of a comic book cover. Identify it precisely and return ONLY valid JSON:
+{
+  "title": "exact series title",
+  "issue": "issue number",
+  "publisher": "publisher name",
+  "year": "year if visible",
+  "cover_urls": ["up to 5 direct image URLs for this exact cover from marvel.com, dc.com, i.annihil.us CDN, or other public comic databases - must be real working URLs"]
+}
+No explanation, just JSON.`}
+          ]}]
+        })
+      });
+      const data=await res.json();
+      const txt=(data.content||[]).map(b=>b.text||'').join('');
+      const d=JSON.parse(txt.replace(/```json|```/g,'').trim());
+
+      if(status) status.textContent=`✅ Identified: ${d.title} #${d.issue}`;
+
+      // Update comic metadata if found
+      const idx=DB.comics.findIndex(x=>x.id===id);
+      if(idx!==-1){
+        if(d.title && !DB.comics[idx].title) DB.comics[idx].title=d.title;
+        if(d.publisher && !DB.comics[idx].publisher) DB.comics[idx].publisher=d.publisher;
+      }
+
+      // Show found URLs as selectable covers + use photo as fallback
+      const allResults=[];
+
+      // Add AI-found URLs
+      (d.cover_urls||[]).forEach(url=>{
+        if(url.startsWith('http'))
+          allResults.push({url,label:`${d.title} #${d.issue}`,source:'AI Identified'});
+      });
+
+      // Always add the actual photo they just took as first option
+      allResults.unshift({url:base64,label:'Your photo (exact cover)',source:'Your Photo',isBase64:true});
+
+      showCoverResults(id, allResults);
+
+    }catch(e){
+      // AI failed — just use the photo directly
+      if(status) status.textContent='Using your photo as cover…';
+      uploadCoverFromBase64(id, base64);
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+function uploadCoverFromBase64(id, base64){
+  // Store photo as cover — will be stripped from localStorage but kept in memory
+  const idx=DB.comics.findIndex(x=>x.id===id); if(idx===-1) return;
+  DB.comics[idx].image=base64;
+  DB.comics[idx].coverUrl='';
+  saveDB(); renderCollection();
+  document.getElementById('fixCoverModal')?.remove();
+  toast('✅ Cover photo saved!');
+
+  // Try to upload to Drive in background
+  if(gdriveToken){
+    const c=DB.comics[idx];
+    gdriveUploadPhoto(id,c.title,c.issue,base64).then(result=>{
+      if(result){
+        DB.comics[idx].drivePhotoUrl=result.url;
+        DB.comics[idx].driveFileId=result.fileId;
+        DB.comics[idx].image='';
+        saveDB(); renderCollection();
+      }
+    }).catch(()=>{});
+  }
+}
+
+function showCoverResults(id, results){
+  const div=document.getElementById('coverSearchResults'); if(!div) return;
+  if(!results.length){
+    div.innerHTML=`<div style="font-size:.78rem;color:var(--dim);padding:.5rem">No covers found — try uploading your photo above.</div>`;
+    return;
+  }
+  div.innerHTML=`
+    <div style="font-size:.72rem;color:var(--dim);margin-bottom:.5rem">${results.length} covers — tap to use</div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem">
+      ${results.slice(0,12).map(r=>{
+        const isB64=r.isBase64;
+        const safeUrl=isB64?'__base64__':r.url.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        const onclick=isB64?`uploadCoverFromBase64('${id}',window._fixCoverB64)`:`applyCoverFix('${id}','${safeUrl}')`;
+        if(isB64) window._fixCoverB64=r.url;
+        return `<div style="cursor:pointer;border:2px solid ${isB64?'var(--gold)':'transparent'};border-radius:4px;overflow:hidden" onclick="${onclick}" onmousedown="this.style.borderColor='var(--gold)'">
+          <img src="${r.url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;display:block;background:var(--border)" onerror="this.parentElement.style.display='none'" loading="lazy">
+          <div style="padding:.2rem .3rem;background:rgba(0,0,0,.85);font-size:.55rem;color:${isB64?'var(--gold)':'var(--paper2)'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+            ${r.label.slice(0,22)} <span style="color:var(--dim)">(${r.source})</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
 }
 
 async function searchCoversForFix(id){
   const c=DB.comics.find(x=>x.id===id); if(!c) return;
   const inputEl=document.getElementById('coverSearchInput');
-  const q=inputEl?.value||`${c.title} ${cleanIssue(c.issue)}`.trim();
+  const q=(inputEl?.value||c.title).trim();
   const resultsDiv=document.getElementById('coverSearchResults'); if(!resultsDiv) return;
   resultsDiv.innerHTML=`<div class="spin-wrap" style="padding:.8rem"><div class="spin"></div><div class="pulse-txt">Searching covers…</div></div>`;
 
-  let allResults=[];
-  const title=c.title||q;
+  const allResults=[];
   const issue=cleanIssue(c.issue);
-  const publisher=c.publisher||'';
 
-  // Source 1: AI finds direct cover image URLs (uses your Anthropic key)
-  if(apiKeys.anthropic){
-    try{
-      const res=await fetch('https://api.anthropic.com/v1/messages',{
-        method:'POST',
-        headers:anthropicHeaders(),
-        body:JSON.stringify({
-          model:'claude-haiku-4-5-20251001',
-          max_tokens:500,
-          messages:[{role:'user',content:`Find comic book cover images for: "${title}" issue #${issue} by ${publisher||'unknown publisher'}.
-
-Return ONLY a JSON array of up to 6 direct image URLs that are publicly accessible (no login required). Use sources like:
-- Marvel CDN: i.annihil.us
-- DC images
-- comicvine.gamespot.com static images  
-- marvel.com
-- dccomics.com
-- League of Comic Geeks images
-
-Format: ["url1","url2","url3"]
-Only return URLs you are confident exist. No explanation, just the JSON array.`}]
-        })
-      });
-      const data=await res.json();
-      const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
-      try{
-        const urls=JSON.parse(txt.replace(/```json|```/g,'').trim());
-        if(Array.isArray(urls)){
-          urls.forEach(url=>{
-            if(url.startsWith('http'))
-              allResults.push({url,label:`${title} #${issue}`,source:'AI Found'});
-          });
-        }
-      }catch(e){}
-    }catch(e){}
-  }
-
-  // Source 2: Google Books with strict title matching
+  // Source 1: Google Books — title-only, strict match
   try{
-    const res=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent('"'+title+'" comic')}&maxResults=8`);
+    const res=await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent('"'+q+'" comic book')}&maxResults=8`);
     if(res.ok){
       const d=await res.json();
       (d.items||[]).forEach(b=>{
         const t=(b.volumeInfo?.title||'').toLowerCase();
-        if(t.includes(title.toLowerCase().split(' ')[0]) && b.volumeInfo?.imageLinks?.thumbnail){
+        if(t.includes(q.toLowerCase().split(' ')[0])&&b.volumeInfo?.imageLinks?.thumbnail){
           const img=b.volumeInfo.imageLinks.thumbnail.replace('zoom=1','zoom=5').replace('http:','https:');
           if(!allResults.find(r=>r.url===img))
             allResults.push({url:img,label:b.volumeInfo.title,source:'Google Books'});
@@ -3053,49 +3137,19 @@ Only return URLs you are confident exist. No explanation, just the JSON array.`}
     }
   }catch(e){}
 
-  // Source 3: Open Library — only include results where title actually matches
+  // Source 2: Open Library — title search only, strict match
   try{
-    const res=await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(title)}&fields=cover_i,title&limit=10`);
+    const res=await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(q)}&fields=cover_i,title&limit=8`);
     if(res.ok){
       const d=await res.json();
-      (d.docs||[]).filter(doc=>{
-        const t=(doc.title||'').toLowerCase();
-        return t.includes(title.toLowerCase().split(' ')[0]) && doc.cover_i;
-      }).slice(0,3).forEach(doc=>{
-        allResults.push({
-          url:`https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`,
-          label:doc.title,
-          source:'Open Library'
+      (d.docs||[]).filter(doc=>doc.cover_i&&(doc.title||'').toLowerCase().includes(q.toLowerCase().split(' ')[0]))
+        .slice(0,4).forEach(doc=>{
+          allResults.push({url:`https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg`,label:doc.title,source:'Open Library'});
         });
-      });
     }
   }catch(e){}
 
-  if(!allResults.length){
-    resultsDiv.innerHTML=`
-      <div style="font-size:.78rem;color:var(--dim);padding:.5rem;line-height:1.8">
-        No covers found for <strong style="color:var(--paper)">"${q}"</strong>.<br><br>
-        Try searching just the title — e.g. <strong style="color:var(--paper2)">"Fantastic Four"</strong> without the issue number.<br><br>
-        <strong style="color:var(--gold)">Best option:</strong> Use <strong>Upload Photo from Camera Roll</strong> above — take a photo of your comic cover and it will be used directly.
-      </div>`;
-    return;
-  }
-
-  resultsDiv.innerHTML=`
-    <div style="font-size:.72rem;color:var(--dim);margin-bottom:.5rem">
-      ${allResults.length} covers found — tap to use
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem">
-      ${allResults.slice(0,12).map(r=>{
-        const safeUrl=r.url.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-        return `<div style="cursor:pointer;border:2px solid transparent;border-radius:4px;overflow:hidden" onclick="applyCoverFix('${id}','${safeUrl}')" onmousedown="this.style.borderColor='var(--gold)'">
-          <img src="${r.url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;display:block;background:var(--border)" onerror="this.parentElement.style.display='none'" loading="lazy">
-          <div style="padding:.2rem .3rem;background:rgba(0,0,0,.8);font-size:.55rem;color:var(--paper2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-            ${r.label.slice(0,25)} <span style="color:var(--dim)">(${r.source})</span>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`;
+  showCoverResults(id, allResults);
 }
 
 function applyCoverFix(id, url){
