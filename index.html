@@ -3449,7 +3449,7 @@ function openCoverCropper(id, input){
 async function smartCoverCapture(id, base64, mimeType){
   const comic=DB.comics.find(x=>x.id===id);
 
-  // Show progress overlay — photo dims in background
+  // Show progress overlay
   const overlay=document.createElement('div');
   overlay.id='smartCaptureOverlay';
   overlay.style.cssText='position:fixed;inset:0;background:#000;z-index:10001;display:flex;flex-direction:column';
@@ -3466,43 +3466,104 @@ async function smartCoverCapture(id, base64, mimeType){
       <button id="sccCancelBtn" style="width:100%;background:transparent;border:1px solid #333;color:#666;padding:.6rem;border-radius:4px;font-size:.82rem;cursor:pointer">✕ Cancel</button>
     </div>`;
   document.body.appendChild(overlay);
-  document.getElementById('sccCancelBtn').addEventListener('click',()=>{
-    overlay.remove(); fixCover(id);
-  });
+  document.getElementById('sccCancelBtn').addEventListener('click',()=>{ overlay.remove(); fixCover(id); });
 
   const setStep=(s,sub)=>{
     const e=document.getElementById('scc-step');
     const e2=document.getElementById('scc-sub');
     if(e) e.textContent=s;
-    if(e2&&sub) e2.textContent=sub;
+    if(e2) e2.textContent=sub||'';
+  };
+
+  // Show error and let user decide what to do
+  const showError=(msg,sub)=>{
+    overlay.remove();
+    const errModal=document.createElement('div');
+    errModal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10001;display:flex;align-items:center;justify-content:center;padding:1.5rem';
+    errModal.innerHTML=`
+      <div style="background:var(--ink2);border:1px solid rgba(230,57,70,.4);border-radius:8px;padding:1.2rem;width:100%;max-width:380px">
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--accent2);margin-bottom:.5rem">⚠ ${msg}</div>
+        <div style="font-size:.78rem;color:var(--dim);margin-bottom:1rem;line-height:1.6">${sub||''}</div>
+        <div style="display:flex;flex-direction:column;gap:.5rem">
+          <button id="errManual" class="btn btn-primary">✂️ Open Manual Cropper</button>
+          <button id="errSaveAny" class="btn btn-ghost">💾 Save Photo As-Is</button>
+          <button id="errCancel" class="btn btn-ghost" style="color:var(--dim)">✕ Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(errModal);
+    document.getElementById('errManual').addEventListener('click',()=>{ errModal.remove(); showCropperModal(id,base64,{x1:10,y1:10,x2:90,y2:90}); });
+    document.getElementById('errSaveAny').addEventListener('click',()=>{ errModal.remove(); uploadCoverFromBase64(id,base64); });
+    document.getElementById('errCancel').addEventListener('click',()=>{ errModal.remove(); fixCover(id); });
   };
 
   try{
-    // One AI call: detect edges + identify comic simultaneously
-    setStep('🤖 Finding edges & reading cover…','');
+    if(!apiKeys.anthropic){
+      showError('API key needed','Add your Anthropic API key in Settings to use auto-crop. Or use Save Photo As-Is to save without cropping.');
+      return;
+    }
+
+    setStep('🤖 Finding comic edges…','Sonnet vision — takes ~5 seconds');
     const res=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',headers:anthropicHeaders(),
       body:JSON.stringify({
         model:'claude-sonnet-4-20250514',max_tokens:200,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
-          {type:'text',text:`Look at this photo of a comic book. Do two things:
-1. Find the precise edges of the comic cover rectangle
-2. Read the title, issue, and publisher text on the cover
+          {type:'text',text:`Look at this photo. Find the comic book cover rectangle and read its text.
 
-Return ONLY this JSON:
-{"x1":12,"y1":8,"x2":87,"y2":94,"title":"Green Lantern","issue":"101","publisher":"DC","variant":""}
+Return ONLY this JSON, no other text:
+{"x1":15,"y1":10,"x2":85,"y2":92,"title":"Green Lantern","issue":"101","publisher":"DC","variant":""}
 
-x1/y1=top-left % of full image, x2/y2=bottom-right % of full image.
-Cut tight to the comic's printed edges. Use "" for unreadable fields.`}
+x1 = left edge of comic as % from left of photo
+y1 = top edge of comic as % from top of photo  
+x2 = right edge of comic as % from left of photo
+y2 = bottom edge of comic as % from top of photo
+All values 0–100. Use "" for unreadable fields.`}
         ]}]
       })
     });
+
+    if(!res.ok){ throw new Error(`API error ${res.status}`); }
     const data=await res.json();
-    const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
-    const match=txt.match(/\{[\s\S]*?\}/);
-    let ai={x1:8,y1:8,x2:92,y2:92,title:'',issue:'',publisher:'',variant:''};
-    if(match){ try{ ai={...ai,...JSON.parse(match[0])}; }catch(e){} }
+    if(data.error){ throw new Error(data.error.message||'API error'); }
+
+    const txt=(data.content||[]).map(b=>b.type==='text'?b.text:'').join('').trim();
+    console.log('[SmartCapture] AI response:',txt.slice(0,200));
+
+    // Greedy match — find the LAST/largest JSON object in response
+    const matches=[...txt.matchAll(/\{[^{}]*\}/g)];
+    let ai=null;
+    for(const m of matches.reverse()){
+      try{
+        const p=JSON.parse(m[0]);
+        if(typeof p.x1==='number'&&typeof p.x2==='number'){ ai=p; break; }
+      }catch(e){}
+    }
+
+    // Validate crop is sensible (not basically the full image)
+    const cropIsValid=ai&&
+      typeof ai.x1==='number'&&typeof ai.x2==='number'&&
+      typeof ai.y1==='number'&&typeof ai.y2==='number'&&
+      ai.x1>=0&&ai.x2<=100&&ai.y1>=0&&ai.y2<=100&&
+      ai.x1<ai.x2&&ai.y1<ai.y2&&
+      (ai.x2-ai.x1)>=10&&(ai.y2-ai.y1)>=10;
+
+    if(!cropIsValid){
+      console.warn('[SmartCapture] Invalid crop coords:',ai);
+      showError('Could not detect comic edges','The AI could not find the comic edges precisely. Try using the manual cropper, or take a clearer photo with the comic flat on a surface.');
+      return;
+    }
+
+    // Check it's actually cropping something (not 90%+ of image which means no background removal)
+    const widthCovered=ai.x2-ai.x1;
+    const heightCovered=ai.y2-ai.y1;
+    const fillPct=(widthCovered*heightCovered)/10000;
+
+    if(fillPct>0.88){
+      // AI detected the comic as basically the full image — photo is already well-framed
+      // OR detection failed and returned defaults — offer manual
+      console.log('[SmartCapture] Comic fills '+Math.round(fillPct*100)+'% of image');
+    }
 
     const clean=v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown|sorry|visible/i.test(v)?v.trim():'';
     const title=clean(ai.title)||comic?.title||'';
@@ -3519,18 +3580,18 @@ Cut tight to the comic's printed edges. Use "" for unreadable fields.`}
       if(variant) DB.comics[idx].variant=variant;
     }
 
-    // Auto-crop the photo
-    setStep(`✂️ Auto-cropping…`, title?`${title} #${issue}`:'');
-    const cropped=await autoCropImage(base64, ai);
+    setStep('✂️ Cropping…', `Detected: ${title||'comic'}${issue?' #'+issue:''} — edges at ${Math.round(ai.x1)}%,${Math.round(ai.y1)}% → ${Math.round(ai.x2)}%,${Math.round(ai.y2)}%`);
+    const cropped=await autoCropImage(base64,ai);
 
-    // ── SAVE AUTOMATICALLY — no picker screen ──
-    setStep('✅ Saving cover…','');
+    // Save automatically
+    setStep('✅ Saving…','');
     const cidx=DB.comics.findIndex(x=>x.id===id);
     if(cidx!==-1){
       DB.comics[cidx].image=cropped;
       DB.comics[cidx].coverAttempted=true;
       saveDB();
     }
+
     // Upload to Drive in background
     if(gdriveToken&&cropped.startsWith('data:')){
       gdriveUploadPhoto(id,title,issue,cropped).then(result=>{
@@ -3543,16 +3604,14 @@ Cut tight to the comic's printed edges. Use "" for unreadable fields.`}
 
     overlay.remove();
     renderCollection();
-
-    // Show confirmation with undo + manual adjust options
     showCoverSavedToast(id, cropped, title, issue);
 
   }catch(err){
-    console.warn('[SmartCapture]',err);
-    overlay.remove();
-    // Fallback: save the original photo uncropped
-    uploadCoverFromBase64(id, base64);
-    toast('✅ Photo saved as cover');
+    console.error('[SmartCapture] Error:',err);
+    const msg=err.message||'Unknown error';
+    if(msg.includes('API')){ showError('API Error',msg+' — check your Anthropic key in Settings.'); }
+    else if(msg.includes('fetch')||msg.includes('network')){ showError('Network Error','Could not reach the AI. Check your internet connection.'); }
+    else { showError('Something went wrong',msg+' — try the manual cropper or save as-is.'); }
   }
 }
 
