@@ -3438,12 +3438,181 @@ function openCoverCropper(id, input){
   reader.onload=async e=>{
     const src=e.target.result;
     document.getElementById('fixCoverModal')?.remove();
-    showCropLoading();
-    const crop=await aiDetectCropArea(src, file.type);
-    hideCropLoading();
-    showCropperModal(id, src, crop);
+    // Run the full smart capture pipeline — no manual cropping needed
+    await smartCoverCapture(id, src, file.type);
   };
   reader.readAsDataURL(file);
+}
+
+// ── SMART COVER CAPTURE PIPELINE ────────────────────────────
+// Photo → AI crops + identifies → finds official cover → pick one
+async function smartCoverCapture(id, base64, mimeType){
+  const comic=DB.comics.find(x=>x.id===id);
+
+  const overlay=document.createElement('div');
+  overlay.id='smartCaptureOverlay';
+  overlay.style.cssText='position:fixed;inset:0;background:#000;z-index:10001;display:flex;flex-direction:column';
+  overlay.innerHTML=`
+    <div style="flex:1;position:relative;overflow:hidden">
+      <img src="${base64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:.3">
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.2rem;padding:2rem">
+        <div style="width:56px;height:56px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div>
+        <div id="scc-step" style="color:#ffd60a;font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;text-align:center">📷 Reading your photo…</div>
+        <div id="scc-sub" style="color:#888;font-size:.8rem;text-align:center;max-width:260px">Finding comic edges and identifying the cover</div>
+      </div>
+    </div>
+    <div style="background:#111;padding:.7rem;flex-shrink:0">
+      <button onclick="document.getElementById('smartCaptureOverlay').remove();fixCover('${id}')" style="width:100%;background:#222;border:1px solid #444;color:#aaa;padding:.7rem;border-radius:4px;font-size:.85rem;cursor:pointer">✕ Cancel</button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const setStep=(s,sub)=>{
+    const e=document.getElementById('scc-step');
+    const e2=document.getElementById('scc-sub');
+    if(e) e.textContent=s;
+    if(e2&&sub) e2.textContent=sub;
+  };
+
+  try{
+    // Single AI call: detect edges + identify comic at once
+    setStep('🤖 Detecting edges & reading title…','Sonnet vision');
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',headers:anthropicHeaders(),
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',max_tokens:200,
+        messages:[{role:'user',content:[
+          {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
+          {type:'text',text:`Look at this photo. Find the comic book and read its cover.
+
+Return ONLY this JSON (no other text):
+{"x1":12,"y1":8,"x2":87,"y2":94,"title":"Green Lantern","issue":"101","publisher":"DC","variant":""}
+
+x1/y1 = top-left corner of the comic as % of the full image.
+x2/y2 = bottom-right corner as % of the full image.
+Be precise to the printed edges of the comic. Use "" for anything unreadable.`}
+        ]}]
+      })
+    });
+    const data=await res.json();
+    const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
+    const match=txt.match(/\{[\s\S]*?\}/);
+    let ai={x1:10,y1:10,x2:90,y2:90,title:'',issue:'',publisher:'',variant:''};
+    if(match){ try{ ai={...ai,...JSON.parse(match[0])}; }catch(e){} }
+
+    const clean=v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown|sorry|visible/i.test(v)?v.trim():'';
+    const title=clean(ai.title)||comic?.title||'';
+    const issue=clean(ai.issue)||comic?.issue||'';
+    const publisher=clean(ai.publisher)||comic?.publisher||'';
+    const variant=clean(ai.variant)||'';
+
+    // Save identified data
+    const idx=DB.comics.findIndex(x=>x.id===id);
+    if(idx!==-1){
+      if(title) DB.comics[idx].title=title;
+      if(issue&&/^\d/.test(issue)) DB.comics[idx].issue=issue.replace(/\D/g,'');
+      if(publisher) DB.comics[idx].publisher=publisher;
+      if(variant) DB.comics[idx].variant=variant;
+      saveDB();
+    }
+
+    // Auto-crop using detected edges
+    setStep(`✂️ Cropping "${title||'comic'} #${issue}"…`,'Removing background');
+    const cropped=await autoCropImage(base64,ai);
+
+    // Search for official covers in parallel
+    setStep('🔍 Finding official cover…',title?`${title} #${issue}`:'Searching databases');
+    const covers=await findCoverImages(title,issue,publisher,variant,null);
+
+    document.getElementById('smartCaptureOverlay')?.remove();
+    showSmartCaptureResults(id,cropped,covers,title,issue);
+
+  }catch(err){
+    document.getElementById('smartCaptureOverlay')?.remove();
+    uploadCoverFromBase64(id,base64);
+    toast('✅ Photo saved as cover');
+  }
+}
+
+function autoCropImage(base64,crop){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const sx=Math.max(0,img.width*(crop.x1/100));
+      const sy=Math.max(0,img.height*(crop.y1/100));
+      const sw=Math.min(img.width*((crop.x2-crop.x1)/100),img.width-sx);
+      const sh=Math.min(img.height*((crop.y2-crop.y1)/100),img.height-sy);
+      if(sw<20||sh<20){ resolve(base64); return; }
+      const c=document.createElement('canvas');
+      c.width=400; c.height=600;
+      const ctx=c.getContext('2d');
+      ctx.fillStyle='#000';
+      ctx.fillRect(0,0,400,600);
+      ctx.drawImage(img,sx,sy,sw,sh,0,0,400,600);
+      resolve(c.toDataURL('image/jpeg',0.93));
+    };
+    img.onerror=()=>resolve(base64);
+    img.src=base64;
+  });
+}
+
+function showSmartCaptureResults(id,croppedPhoto,officialCovers,title,issue){
+  const modal=document.createElement('div');
+  modal.id='smartCaptureResults';
+  modal.style.cssText='position:fixed;inset:0;background:var(--ink);z-index:10000;display:flex;flex-direction:column;overflow:hidden';
+
+  // Escape the base64 for safe embedding in onclick
+  const saveId=`_scc_${id}`;
+  window[saveId]=croppedPhoto; // store in window to avoid inline base64 in onclick
+
+  modal.innerHTML=`
+    <div style="padding:.7rem 1rem;background:var(--ink2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <div>
+        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold)">🖼️ Pick Your Cover</div>
+        <div style="font-size:.72rem;color:var(--dim)">${title}${issue?' #'+issue:''} · tap to use</div>
+      </div>
+      <button onclick="document.getElementById('smartCaptureResults').remove();fixCover('${id}')" style="background:none;border:none;color:var(--dim);font-size:1.2rem;cursor:pointer">✕</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:.8rem">
+
+      <div style="font-size:.7rem;font-weight:700;letter-spacing:1.5px;color:var(--dim);margin-bottom:.5rem">YOUR PHOTO — AUTO-CROPPED</div>
+      <div style="display:flex;gap:.7rem;margin-bottom:1rem">
+        <img src="${croppedPhoto}" style="width:110px;height:165px;object-fit:cover;border-radius:4px;border:2px solid var(--gold);flex-shrink:0" onerror="this.style.display='none'">
+        <div style="flex:1;display:flex;flex-direction:column;gap:.4rem;justify-content:center">
+          <div style="font-size:.78rem;color:var(--paper2);line-height:1.5">Your actual copy — shows the real condition and variant correctly.</div>
+          <button class="btn btn-gold" onclick="_useBase64Cover('${id}','${saveId}')">✅ Use My Photo</button>
+          <button class="btn btn-ghost btn-sm" onclick="_adjustCrop('${id}','${saveId}')">✂️ Adjust Crop</button>
+        </div>
+      </div>
+
+      ${officialCovers.length?`
+        <div style="font-size:.7rem;font-weight:700;letter-spacing:1.5px;color:var(--dim);margin-bottom:.5rem">OFFICIAL COVERS (${officialCovers.length} found)</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem">
+          ${officialCovers.slice(0,9).map(c=>`
+            <div style="cursor:pointer" onclick="document.getElementById('smartCaptureResults').remove();applyCoverFix('${id}','${c.url.replace(/'/g,"\\'")}')">
+              <img src="${c.url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:3px;border:2px solid var(--border)" onerror="this.parentElement.style.display='none'">
+              <div style="font-size:.6rem;color:var(--dim);margin-top:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.source||''}</div>
+            </div>`).join('')}
+        </div>`:`
+        <div style="padding:.8rem;background:rgba(255,255,255,.03);border-radius:4px;text-align:center;font-size:.78rem;color:var(--dim)">
+          No official covers found — your auto-cropped photo is ready to use above.
+        </div>`}
+    </div>`;
+
+  document.body.appendChild(modal);
+}
+
+function _useBase64Cover(id, storeKey){
+  const b64=window[storeKey];
+  document.getElementById('smartCaptureResults')?.remove();
+  if(b64) uploadCoverFromBase64(id,b64);
+  delete window[storeKey];
+}
+
+function _adjustCrop(id, storeKey){
+  const b64=window[storeKey];
+  document.getElementById('smartCaptureResults')?.remove();
+  if(b64) showCropperModal(id,b64,{x1:0,y1:0,x2:100,y2:100});
+  delete window[storeKey];
 }
 
 function showCropLoading(){
