@@ -3560,17 +3560,13 @@ function showSmartCaptureResults(id,croppedPhoto,officialCovers,title,issue){
   modal.id='smartCaptureResults';
   modal.style.cssText='position:fixed;inset:0;background:var(--ink);z-index:10000;display:flex;flex-direction:column;overflow:hidden';
 
-  // Escape the base64 for safe embedding in onclick
-  const saveId=`_scc_${id}`;
-  window[saveId]=croppedPhoto; // store in window to avoid inline base64 in onclick
-
   modal.innerHTML=`
     <div style="padding:.7rem 1rem;background:var(--ink2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
       <div>
         <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold)">🖼️ Pick Your Cover</div>
         <div style="font-size:.72rem;color:var(--dim)">${title}${issue?' #'+issue:''} · tap to use</div>
       </div>
-      <button onclick="document.getElementById('smartCaptureResults').remove();fixCover('${id}')" style="background:none;border:none;color:var(--dim);font-size:1.2rem;cursor:pointer">✕</button>
+      <button id="sccCloseBtn" style="background:none;border:none;color:var(--dim);font-size:1.2rem;cursor:pointer;padding:.3rem">✕</button>
     </div>
     <div style="flex:1;overflow-y:auto;padding:.8rem">
 
@@ -3579,16 +3575,16 @@ function showSmartCaptureResults(id,croppedPhoto,officialCovers,title,issue){
         <img src="${croppedPhoto}" style="width:110px;height:165px;object-fit:cover;border-radius:4px;border:2px solid var(--gold);flex-shrink:0" onerror="this.style.display='none'">
         <div style="flex:1;display:flex;flex-direction:column;gap:.4rem;justify-content:center">
           <div style="font-size:.78rem;color:var(--paper2);line-height:1.5">Your actual copy — shows the real condition and variant correctly.</div>
-          <button class="btn btn-gold" onclick="_useBase64Cover('${id}','${saveId}')">✅ Use My Photo</button>
-          <button class="btn btn-ghost btn-sm" onclick="_adjustCrop('${id}','${saveId}')">✂️ Adjust Crop</button>
+          <button id="sccUsePhotoBtn" class="btn btn-gold">✅ Use My Photo</button>
+          <button id="sccAdjustBtn" class="btn btn-ghost btn-sm">✂️ Adjust Crop</button>
         </div>
       </div>
 
       ${officialCovers.length?`
         <div style="font-size:.7rem;font-weight:700;letter-spacing:1.5px;color:var(--dim);margin-bottom:.5rem">OFFICIAL COVERS (${officialCovers.length} found)</div>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem">
-          ${officialCovers.slice(0,9).map(c=>`
-            <div style="cursor:pointer" onclick="document.getElementById('smartCaptureResults').remove();applyCoverFix('${id}','${c.url.replace(/'/g,"\\'")}')">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem" id="sccOfficialGrid">
+          ${officialCovers.slice(0,9).map((c,i)=>`
+            <div style="cursor:pointer" data-cover-idx="${i}">
               <img src="${c.url}" style="width:100%;aspect-ratio:2/3;object-fit:cover;border-radius:3px;border:2px solid var(--border)" onerror="this.parentElement.style.display='none'">
               <div style="font-size:.6rem;color:var(--dim);margin-top:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.source||''}</div>
             </div>`).join('')}
@@ -3599,20 +3595,32 @@ function showSmartCaptureResults(id,croppedPhoto,officialCovers,title,issue){
     </div>`;
 
   document.body.appendChild(modal);
-}
 
-function _useBase64Cover(id, storeKey){
-  const b64=window[storeKey];
-  document.getElementById('smartCaptureResults')?.remove();
-  if(b64) uploadCoverFromBase64(id,b64);
-  delete window[storeKey];
-}
+  // Wire up buttons with direct event listeners — no inline onclick with base64
+  document.getElementById('sccCloseBtn').addEventListener('click',()=>{
+    modal.remove(); fixCover(id);
+  });
+  document.getElementById('sccUsePhotoBtn').addEventListener('click',()=>{
+    modal.remove();
+    uploadCoverFromBase64(id, croppedPhoto);
+  });
+  document.getElementById('sccAdjustBtn').addEventListener('click',()=>{
+    modal.remove();
+    showCropperModal(id, croppedPhoto, {x1:0,y1:0,x2:100,y2:100});
+  });
 
-function _adjustCrop(id, storeKey){
-  const b64=window[storeKey];
-  document.getElementById('smartCaptureResults')?.remove();
-  if(b64) showCropperModal(id,b64,{x1:0,y1:0,x2:100,y2:100});
-  delete window[storeKey];
+  // Wire official cover taps
+  const grid=document.getElementById('sccOfficialGrid');
+  if(grid){
+    grid.querySelectorAll('[data-cover-idx]').forEach(el=>{
+      const idx=parseInt(el.getAttribute('data-cover-idx'));
+      const cover=officialCovers[idx];
+      if(cover) el.addEventListener('click',()=>{
+        modal.remove();
+        applyCoverFix(id, cover.url);
+      });
+    });
+  }
 }
 
 function showCropLoading(){
@@ -3673,26 +3681,31 @@ function showCropperModal(id, src, aiCrop){
   modal.id='cropperModal';
   modal.style.cssText='position:fixed;inset:0;background:#000;z-index:10000;display:flex;flex-direction:column';
   modal.innerHTML=`
-    <div style="padding:.5rem 1rem;background:#111;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;gap:.5rem">
-      <div style="font-family:'Barlow Condensed';font-weight:700;color:#ffd60a;font-size:.9rem;flex:1">
-        ✂️ Drag corners to the comic edges
-      </div>
-      <button onclick="cropperAutoSnap()" style="background:#333;border:1px solid #555;color:#ffd60a;padding:.35rem .7rem;border-radius:4px;font-size:.75rem;font-weight:700;cursor:pointer;white-space:nowrap">🎯 Re-detect</button>
-      <button onclick="document.getElementById('cropperModal').remove();fixCover('${id}')" style="background:none;border:none;color:#aaa;font-size:1.3rem;cursor:pointer;padding:.2rem">✕</button>
+    <div style="padding:.5rem .8rem;background:#111;display:flex;align-items:center;gap:.5rem;flex-shrink:0">
+      <div style="font-family:'Barlow Condensed';font-weight:700;color:#ffd60a;font-size:.9rem;flex:1">✂️ Drag corners to comic edges</div>
+      <button onclick="cropperAutoSnap()" style="background:#333;border:1px solid #555;color:#ffd60a;padding:.3rem .6rem;border-radius:4px;font-size:.72rem;font-weight:700;cursor:pointer">🎯 Re-detect</button>
+      <button onclick="document.getElementById('cropperModal').remove();fixCover('${id}')" style="background:none;border:none;color:#777;font-size:1.2rem;cursor:pointer;padding:.1rem">✕</button>
     </div>
-    <div style="flex:1;position:relative;overflow:hidden;touch-action:none" id="cropperArea">
+
+    <!-- Main crop area -->
+    <div style="flex:1;position:relative;overflow:hidden;touch-action:none;min-height:0" id="cropperArea">
       <img id="cropperImg" src="${src}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-select:none;pointer-events:none">
       <canvas id="cropperCanvas" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none"></canvas>
     </div>
-    <div style="padding:.6rem;background:#111;display:flex;gap:.5rem;flex-shrink:0">
-      <button onclick="cropperRotate()" style="background:#222;border:1px solid #444;color:#fff;padding:.55rem .8rem;border-radius:4px;font-size:.8rem;cursor:pointer;flex-shrink:0">↻ Rotate</button>
-      <button onclick="cropperReset()" style="background:#222;border:1px solid #444;color:#fff;padding:.55rem .8rem;border-radius:4px;font-size:.8rem;cursor:pointer;flex-shrink:0">⟳ Reset</button>
-      <button onclick="cropperApply('${id}')" style="flex:1;background:#ffd60a;border:none;color:#000;padding:.65rem;border-radius:4px;font-weight:700;font-size:.95rem;cursor:pointer">✅ Use This Cover</button>
+
+    <!-- Live preview strip -->
+    <div style="background:#0a0a0a;border-top:1px solid #222;padding:.5rem .8rem;display:flex;align-items:center;gap:.8rem;flex-shrink:0">
+      <div style="font-size:.65rem;color:#666;font-weight:700;letter-spacing:1px;white-space:nowrap">PREVIEW</div>
+      <canvas id="cropPreview" width="60" height="90" style="border-radius:3px;border:1px solid #333;flex-shrink:0;background:#111"></canvas>
+      <div style="flex:1;display:flex;gap:.4rem">
+        <button onclick="cropperRotate()" style="flex:1;background:#222;border:1px solid #333;color:#fff;padding:.5rem .4rem;border-radius:4px;font-size:.78rem;cursor:pointer">↻ Rotate</button>
+        <button onclick="cropperReset()" style="flex:1;background:#222;border:1px solid #333;color:#fff;padding:.5rem .4rem;border-radius:4px;font-size:.78rem;cursor:pointer">⟳ Reset</button>
+        <button onclick="cropperApply('${id}')" style="flex:2;background:#ffd60a;border:none;color:#000;padding:.5rem;border-radius:4px;font-weight:700;font-size:.88rem;cursor:pointer">✅ Use This</button>
+      </div>
     </div>`;
   document.body.appendChild(modal);
   _cropState={pts:null,drag:-1,imgRot:0,origSrc:src,aiCrop:aiCrop||{x1:8,y1:8,x2:92,y2:92}};
   const img=document.getElementById('cropperImg');
-  // Wait for image to be fully laid out
   const tryInit=()=>{
     const area=document.getElementById('cropperArea');
     if(area&&img.naturalWidth>0&&area.clientWidth>0){
@@ -3790,7 +3803,6 @@ function renderCropperCanvas(){
   const HANDLE_R=26;
   pts.forEach((p,i)=>{
     const active=i===_cropState.drag;
-    // Shadow
     ctx.shadowColor='rgba(0,0,0,.6)';
     ctx.shadowBlur=8;
     ctx.beginPath();
@@ -3801,13 +3813,43 @@ function renderCropperCanvas(){
     ctx.lineWidth=2.5;
     ctx.stroke();
     ctx.shadowBlur=0;
-    // Corner icon
     ctx.fillStyle=active?'#000':'#ffd60a';
     ctx.font=`bold ${HANDLE_R}px Arial`;
     ctx.textAlign='center';
     ctx.textBaseline='middle';
     ctx.fillText(['↖','↗','↘','↙'][i],p.x,p.y);
   });
+
+  // Update live preview
+  _updateCropPreview();
+}
+
+function _updateCropPreview(){
+  const preview=document.getElementById('cropPreview');
+  const img=document.getElementById('cropperImg');
+  const ir=_cropState.imgRect;
+  if(!preview||!img||!ir||!_cropState.pts) return;
+
+  const pts=_cropState.pts;
+  const minX=Math.min(...pts.map(p=>p.x));
+  const maxX=Math.max(...pts.map(p=>p.x));
+  const minY=Math.min(...pts.map(p=>p.y));
+  const maxY=Math.max(...pts.map(p=>p.y));
+
+  const scaleX=img.naturalWidth/ir.iw;
+  const scaleY=img.naturalHeight/ir.ih;
+  const sx=Math.max(0,(minX-ir.ix)*scaleX);
+  const sy=Math.max(0,(minY-ir.iy)*scaleY);
+  const sw=Math.min((maxX-minX)*scaleX, img.naturalWidth-sx);
+  const sh=Math.min((maxY-minY)*scaleY, img.naturalHeight-sy);
+  if(sw<5||sh<5) return;
+
+  const pCtx=preview.getContext('2d');
+  pCtx.clearRect(0,0,60,90);
+  // Draw a fresh image source each time
+  const tmpImg=new Image();
+  tmpImg.onload=()=>pCtx.drawImage(tmpImg,sx,sy,sw,sh,0,0,60,90);
+  tmpImg.src=_cropState.origSrc;
 }
 
 function bindCropperEvents(){
