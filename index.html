@@ -3449,22 +3449,26 @@ function openCoverCropper(id, input){
 async function smartCoverCapture(id, base64, mimeType){
   const comic=DB.comics.find(x=>x.id===id);
 
+  // Show progress overlay — photo dims in background
   const overlay=document.createElement('div');
   overlay.id='smartCaptureOverlay';
   overlay.style.cssText='position:fixed;inset:0;background:#000;z-index:10001;display:flex;flex-direction:column';
   overlay.innerHTML=`
     <div style="flex:1;position:relative;overflow:hidden">
-      <img src="${base64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:.3">
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.2rem;padding:2rem">
-        <div style="width:56px;height:56px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div>
-        <div id="scc-step" style="color:#ffd60a;font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;text-align:center">📷 Reading your photo…</div>
-        <div id="scc-sub" style="color:#888;font-size:.8rem;text-align:center;max-width:260px">Finding comic edges and identifying the cover</div>
+      <img src="${base64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:.25">
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:2rem">
+        <div style="width:52px;height:52px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div>
+        <div id="scc-step" style="color:#ffd60a;font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;text-align:center;letter-spacing:.5px">📷 Reading photo…</div>
+        <div id="scc-sub" style="color:#777;font-size:.78rem;text-align:center;max-width:240px">AI finding comic edges</div>
       </div>
     </div>
-    <div style="background:#111;padding:.7rem;flex-shrink:0">
-      <button onclick="document.getElementById('smartCaptureOverlay').remove();fixCover('${id}')" style="width:100%;background:#222;border:1px solid #444;color:#aaa;padding:.7rem;border-radius:4px;font-size:.85rem;cursor:pointer">✕ Cancel</button>
+    <div style="background:#111;padding:.6rem;flex-shrink:0">
+      <button id="sccCancelBtn" style="width:100%;background:transparent;border:1px solid #333;color:#666;padding:.6rem;border-radius:4px;font-size:.82rem;cursor:pointer">✕ Cancel</button>
     </div>`;
   document.body.appendChild(overlay);
+  document.getElementById('sccCancelBtn').addEventListener('click',()=>{
+    overlay.remove(); fixCover(id);
+  });
 
   const setStep=(s,sub)=>{
     const e=document.getElementById('scc-step');
@@ -3474,29 +3478,30 @@ async function smartCoverCapture(id, base64, mimeType){
   };
 
   try{
-    // Single AI call: detect edges + identify comic at once
-    setStep('🤖 Detecting edges & reading title…','Sonnet vision');
+    // One AI call: detect edges + identify comic simultaneously
+    setStep('🤖 Finding edges & reading cover…','');
     const res=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',headers:anthropicHeaders(),
       body:JSON.stringify({
         model:'claude-sonnet-4-20250514',max_tokens:200,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
-          {type:'text',text:`Look at this photo. Find the comic book and read its cover.
+          {type:'text',text:`Look at this photo of a comic book. Do two things:
+1. Find the precise edges of the comic cover rectangle
+2. Read the title, issue, and publisher text on the cover
 
-Return ONLY this JSON (no other text):
+Return ONLY this JSON:
 {"x1":12,"y1":8,"x2":87,"y2":94,"title":"Green Lantern","issue":"101","publisher":"DC","variant":""}
 
-x1/y1 = top-left corner of the comic as % of the full image.
-x2/y2 = bottom-right corner as % of the full image.
-Be precise to the printed edges of the comic. Use "" for anything unreadable.`}
+x1/y1=top-left % of full image, x2/y2=bottom-right % of full image.
+Cut tight to the comic's printed edges. Use "" for unreadable fields.`}
         ]}]
       })
     });
     const data=await res.json();
     const txt=(data.content||[]).map(b=>b.text||'').join('').trim();
     const match=txt.match(/\{[\s\S]*?\}/);
-    let ai={x1:10,y1:10,x2:90,y2:90,title:'',issue:'',publisher:'',variant:''};
+    let ai={x1:8,y1:8,x2:92,y2:92,title:'',issue:'',publisher:'',variant:''};
     if(match){ try{ ai={...ai,...JSON.parse(match[0])}; }catch(e){} }
 
     const clean=v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown|sorry|visible/i.test(v)?v.trim():'';
@@ -3505,32 +3510,88 @@ Be precise to the printed edges of the comic. Use "" for anything unreadable.`}
     const publisher=clean(ai.publisher)||comic?.publisher||'';
     const variant=clean(ai.variant)||'';
 
-    // Save identified data
+    // Update comic metadata
     const idx=DB.comics.findIndex(x=>x.id===id);
     if(idx!==-1){
       if(title) DB.comics[idx].title=title;
       if(issue&&/^\d/.test(issue)) DB.comics[idx].issue=issue.replace(/\D/g,'');
       if(publisher) DB.comics[idx].publisher=publisher;
       if(variant) DB.comics[idx].variant=variant;
-      saveDB();
     }
 
-    // Auto-crop using detected edges
-    setStep(`✂️ Cropping "${title||'comic'} #${issue}"…`,'Removing background');
-    const cropped=await autoCropImage(base64,ai);
+    // Auto-crop the photo
+    setStep(`✂️ Auto-cropping…`, title?`${title} #${issue}`:'');
+    const cropped=await autoCropImage(base64, ai);
 
-    // Search for official covers in parallel
-    setStep('🔍 Finding official cover…',title?`${title} #${issue}`:'Searching databases');
-    const covers=await findCoverImages(title,issue,publisher,variant,null);
+    // ── SAVE AUTOMATICALLY — no picker screen ──
+    setStep('✅ Saving cover…','');
+    const cidx=DB.comics.findIndex(x=>x.id===id);
+    if(cidx!==-1){
+      DB.comics[cidx].image=cropped;
+      DB.comics[cidx].coverAttempted=true;
+      saveDB();
+    }
+    // Upload to Drive in background
+    if(gdriveToken&&cropped.startsWith('data:')){
+      gdriveUploadPhoto(id,title,issue,cropped).then(result=>{
+        if(result){
+          const i2=DB.comics.findIndex(x=>x.id===id);
+          if(i2!==-1){ DB.comics[i2].drivePhotoUrl=result.url; DB.comics[i2].driveFileId=result.fileId; DB.comics[i2].image=''; saveDB(); }
+        }
+      }).catch(()=>{});
+    }
 
-    document.getElementById('smartCaptureOverlay')?.remove();
-    showSmartCaptureResults(id,cropped,covers,title,issue);
+    overlay.remove();
+    renderCollection();
+
+    // Show confirmation with undo + manual adjust options
+    showCoverSavedToast(id, cropped, title, issue);
 
   }catch(err){
-    document.getElementById('smartCaptureOverlay')?.remove();
-    uploadCoverFromBase64(id,base64);
+    console.warn('[SmartCapture]',err);
+    overlay.remove();
+    // Fallback: save the original photo uncropped
+    uploadCoverFromBase64(id, base64);
     toast('✅ Photo saved as cover');
   }
+}
+
+function showCoverSavedToast(id, cropped, title, issue){
+  // Remove any existing
+  document.getElementById('coverSavedToast')?.remove();
+
+  const t=document.createElement('div');
+  t.id='coverSavedToast';
+  t.style.cssText=`position:fixed;bottom:calc(var(--bottom-nav-h)+10px);left:10px;right:10px;
+    background:var(--ink2);border:1px solid rgba(74,222,128,.4);border-radius:8px;
+    padding:.7rem .9rem;z-index:900;display:flex;align-items:center;gap:.7rem;
+    box-shadow:0 4px 20px rgba(0,0,0,.6)`;
+  t.innerHTML=`
+    <img src="${cropped}" style="width:36px;height:54px;object-fit:cover;border-radius:3px;flex-shrink:0;border:1px solid var(--border)">
+    <div style="flex:1;min-width:0">
+      <div style="font-size:.8rem;font-weight:700;color:var(--green)">✅ Cover saved</div>
+      <div style="font-size:.7rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title||''}${issue?' #'+issue:''}</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:.3rem;flex-shrink:0">
+      <button id="cstAdjust" class="btn btn-ghost btn-sm" style="font-size:.68rem;padding:.25rem .5rem">✂️ Adjust</button>
+      <button id="cstUndo" class="btn btn-ghost btn-sm" style="font-size:.68rem;padding:.25rem .5rem;color:var(--accent2)">↩ Undo</button>
+    </div>`;
+  document.body.appendChild(t);
+
+  // Wire buttons
+  document.getElementById('cstAdjust').addEventListener('click',()=>{
+    t.remove();
+    showCropperModal(id, cropped, {x1:5,y1:5,x2:95,y2:95});
+  });
+  document.getElementById('cstUndo').addEventListener('click',()=>{
+    t.remove();
+    const idx=DB.comics.findIndex(x=>x.id===id);
+    if(idx!==-1){ DB.comics[idx].image=''; DB.comics[idx].coverUrl=''; DB.comics[idx].drivePhotoUrl=''; saveDB(); renderCollection(); }
+    toast('Cover removed','info');
+  });
+
+  // Auto-dismiss after 8 seconds
+  setTimeout(()=>t.remove(), 8000);
 }
 
 function autoCropImage(base64,crop){
@@ -3606,7 +3667,8 @@ function showSmartCaptureResults(id,croppedPhoto,officialCovers,title,issue){
   });
   document.getElementById('sccAdjustBtn').addEventListener('click',()=>{
     modal.remove();
-    showCropperModal(id, croppedPhoto, {x1:0,y1:0,x2:100,y2:100});
+    // Use a 5% inset so handles are visible inside the image
+    showCropperModal(id, croppedPhoto, {x1:5,y1:5,x2:95,y2:95});
   });
 
   // Wire official cover taps
@@ -3755,72 +3817,78 @@ function renderCropperCanvas(){
   const canvas=document.getElementById('cropperCanvas');
   const area=document.getElementById('cropperArea');
   if(!canvas||!area||!_cropState.pts) return;
-  // Match canvas to actual pixel size
-  canvas.width=area.clientWidth;
-  canvas.height=area.clientHeight;
+
+  // Fix DPR on Android — must scale canvas for device pixel ratio
+  const dpr=window.devicePixelRatio||1;
+  const cw=area.clientWidth;
+  const ch=area.clientHeight;
+  canvas.width=cw*dpr;
+  canvas.height=ch*dpr;
+  canvas.style.width=cw+'px';
+  canvas.style.height=ch+'px';
+
   const ctx=canvas.getContext('2d');
+  ctx.scale(dpr,dpr); // Scale all drawing to match DPR
   const pts=_cropState.pts;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // Dark overlay outside selection
-  ctx.fillStyle='rgba(0,0,0,0.65)';
-  ctx.fillRect(0,0,canvas.width,canvas.height);
+  // Dark overlay
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(0,0,cw,ch);
 
-  // Cut out the selected area (lighten it)
+  // Clear inside crop area so you can see the image through it
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(pts[0].x,pts[0].y);
   pts.forEach(p=>ctx.lineTo(p.x,p.y));
   ctx.closePath();
   ctx.clip();
-  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.clearRect(0,0,cw,ch);
   ctx.restore();
 
-  // Border
+  // Yellow border
   ctx.strokeStyle='#ffd60a';
-  ctx.lineWidth=2.5;
+  ctx.lineWidth=2;
   ctx.beginPath();
   ctx.moveTo(pts[0].x,pts[0].y);
   pts.forEach(p=>ctx.lineTo(p.x,p.y));
   ctx.closePath();
   ctx.stroke();
 
-  // Rule-of-thirds grid inside selection
+  // Rule-of-thirds grid
   const minX=Math.min(...pts.map(p=>p.x));
   const maxX=Math.max(...pts.map(p=>p.x));
   const minY=Math.min(...pts.map(p=>p.y));
   const maxY=Math.max(...pts.map(p=>p.y));
-  ctx.strokeStyle='rgba(255,214,10,0.18)';
+  ctx.strokeStyle='rgba(255,214,10,0.2)';
   ctx.lineWidth=1;
   [1/3,2/3].forEach(t=>{
-    const x=minX+(maxX-minX)*t;
-    const y=minY+(maxY-minY)*t;
-    ctx.beginPath(); ctx.moveTo(x,minY); ctx.lineTo(x,maxY); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(minX,y); ctx.lineTo(maxX,y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(minX+(maxX-minX)*t,minY); ctx.lineTo(minX+(maxX-minX)*t,maxY); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(minX,minY+(maxY-minY)*t); ctx.lineTo(maxX,minY+(maxY-minY)*t); ctx.stroke();
   });
 
-  // Corner handles — large circles for easy touch
-  const HANDLE_R=26;
+  // Corner handles
+  const HR=28;
   pts.forEach((p,i)=>{
     const active=i===_cropState.drag;
-    ctx.shadowColor='rgba(0,0,0,.6)';
-    ctx.shadowBlur=8;
     ctx.beginPath();
-    ctx.arc(p.x,p.y,HANDLE_R,0,Math.PI*2);
-    ctx.fillStyle=active?'#ffd60a':'rgba(255,214,10,0.3)';
+    ctx.arc(p.x,p.y,HR,0,Math.PI*2);
+    ctx.fillStyle=active?'#ffd60a':'rgba(20,20,20,0.75)';
     ctx.fill();
     ctx.strokeStyle='#ffd60a';
-    ctx.lineWidth=2.5;
+    ctx.lineWidth=active?3:2.5;
     ctx.stroke();
-    ctx.shadowBlur=0;
-    ctx.fillStyle=active?'#000':'#ffd60a';
-    ctx.font=`bold ${HANDLE_R}px Arial`;
-    ctx.textAlign='center';
-    ctx.textBaseline='middle';
-    ctx.fillText(['↖','↗','↘','↙'][i],p.x,p.y);
+    // Corner indicator lines instead of text (more reliable cross-device)
+    ctx.strokeStyle=active?'#000':'#ffd60a';
+    ctx.lineWidth=3;
+    ctx.lineCap='round';
+    const d=10;
+    const sx=i===1||i===2?-1:1; // right side corners point left
+    const sy=i===2||i===3?-1:1; // bottom corners point up
+    ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x+sx*d,p.y); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x,p.y+sy*d); ctx.stroke();
+    ctx.lineCap='butt';
   });
 
-  // Update live preview
   _updateCropPreview();
 }
 
@@ -3855,21 +3923,22 @@ function _updateCropPreview(){
 function bindCropperEvents(){
   const canvas=document.getElementById('cropperCanvas');
   if(!canvas) return;
-  // Remove old listeners by replacing element
+  // Replace element to remove stale listeners
   const fresh=canvas.cloneNode(true);
   canvas.parentNode.replaceChild(fresh,canvas);
   const c=document.getElementById('cropperCanvas');
 
-  const HANDLE_R=40; // generous hit target
+  const HR=44; // generous hit radius in CSS pixels
   const getPos=ev=>{
     const r=c.getBoundingClientRect();
     const t=ev.touches?ev.touches[0]:ev;
-    return{x:(t.clientX-r.left)*(c.width/r.width),y:(t.clientY-r.top)*(c.height/r.height)};
+    // coords in CSS pixels (already accounts for DPR via getBoundingClientRect)
+    return{x:t.clientX-r.left, y:t.clientY-r.top};
   };
   const down=ev=>{
     ev.preventDefault();
     const pos=getPos(ev);
-    _cropState.drag=_cropState.pts.findIndex(p=>Math.hypot(p.x-pos.x,p.y-pos.y)<HANDLE_R);
+    _cropState.drag=_cropState.pts.findIndex(p=>Math.hypot(p.x-pos.x,p.y-pos.y)<HR);
     renderCropperCanvas();
   };
   const move=ev=>{
@@ -3877,10 +3946,11 @@ function bindCropperEvents(){
     if(_cropState.drag<0) return;
     const pos=getPos(ev);
     const r=_cropState.imgRect;
-    // Clamp to image bounds
-    const x=Math.max(r.ix,Math.min(r.ix+r.iw,pos.x));
-    const y=Math.max(r.iy,Math.min(r.iy+r.ih,pos.y));
-    _cropState.pts[_cropState.drag]={x,y};
+    if(r){
+      pos.x=Math.max(r.ix, Math.min(r.ix+r.iw, pos.x));
+      pos.y=Math.max(r.iy, Math.min(r.iy+r.ih, pos.y));
+    }
+    _cropState.pts[_cropState.drag]={x:pos.x,y:pos.y};
     renderCropperCanvas();
   };
   const up=()=>{ _cropState.drag=-1; renderCropperCanvas(); };
@@ -3917,11 +3987,8 @@ function cropperApply(id){
   const img=document.getElementById('cropperImg');
   if(!img||!pts||!ir){ toast('Crop not ready','error'); return; }
 
-  // Map screen pts back to natural image coordinates
-  const canvas=document.getElementById('cropperCanvas');
-  const scaleX=img.naturalWidth/(ir.iw*(canvas?.width/ir.aw||1));
-  const scaleY=img.naturalHeight/(ir.ih*(canvas?.height/ir.ah||1));
-
+  // pts are in CSS pixels. ir.iw/ih is the rendered image size in CSS pixels.
+  // Scale to natural image coordinates.
   const natScaleX=img.naturalWidth/ir.iw;
   const natScaleY=img.naturalHeight/ir.ih;
 
@@ -3937,7 +4004,6 @@ function cropperApply(id){
 
   if(sw<10||sh<10){ toast('Selection too small — adjust handles','error'); return; }
 
-  // Render to 2:3 canvas (standard comic ratio)
   const out=document.createElement('canvas');
   out.width=400; out.height=600;
   const ctx=out.getContext('2d');
@@ -3946,6 +4012,7 @@ function cropperApply(id){
 
   const cropSrc=new Image();
   cropSrc.onload=()=>{
+    ctx.save();
     if(_cropState.imgRot){
       ctx.translate(200,300);
       ctx.rotate(_cropState.imgRot*Math.PI/180);
