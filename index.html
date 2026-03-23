@@ -3509,16 +3509,21 @@ async function smartCoverCapture(id, base64, mimeType){
         model:'claude-sonnet-4-20250514',max_tokens:200,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
-          {type:'text',text:`Look at this photo. Find the comic book cover rectangle and read its text.
+          {type:'text',text:`Look at this photo of a comic book on a surface. I need to crop OUT the background.
 
-Return ONLY this JSON, no other text:
-{"x1":15,"y1":10,"x2":85,"y2":92,"title":"Green Lantern","issue":"101","publisher":"DC","variant":""}
+Find the 4 edges of the comic cover rectangle and return them as % of the full image dimensions.
+The comic will NOT fill 100% of the photo — there will be background (table, carpet, hand, etc) around it.
 
-x1 = left edge of comic as % from left of photo
-y1 = top edge of comic as % from top of photo  
-x2 = right edge of comic as % from left of photo
-y2 = bottom edge of comic as % from top of photo
-All values 0–100. Use "" for unreadable fields.`}
+Return ONLY this JSON (no other text):
+{"x1":18,"y1":12,"x2":82,"y2":91,"title":"Green Lantern","issue":"101","publisher":"DC","variant":""}
+
+Rules:
+- x1 = where the LEFT edge of the comic is (% from left of photo) — should be > 0
+- y1 = where the TOP edge of the comic is (% from top of photo) — should be > 0  
+- x2 = where the RIGHT edge of the comic is (% from left of photo) — should be < 100
+- y2 = where the BOTTOM edge of the comic is (% from top of photo) — should be < 100
+- The comic should NOT span from 0% to 100% — that means you failed to find it
+- Use "" for title/issue/publisher if you cannot read them`}
         ]}]
       })
     });
@@ -3554,15 +3559,59 @@ All values 0–100. Use "" for unreadable fields.`}
       return;
     }
 
-    // Check it's actually cropping something (not 90%+ of image which means no background removal)
+    // Check if AI actually found a tight crop or just returned near-full-image
     const widthCovered=ai.x2-ai.x1;
     const heightCovered=ai.y2-ai.y1;
     const fillPct=(widthCovered*heightCovered)/10000;
+    console.log('[SmartCapture] Crop: '+JSON.stringify({x1:ai.x1,y1:ai.y1,x2:ai.x2,y2:ai.y2})+' fills '+Math.round(fillPct*100)+'%');
 
     if(fillPct>0.88){
-      // AI detected the comic as basically the full image — photo is already well-framed
-      // OR detection failed and returned defaults — offer manual
-      console.log('[SmartCapture] Comic fills '+Math.round(fillPct*100)+'% of image');
+      // AI returned basically full image — detection likely failed
+      // Offer manual crop instead of saving uncropped
+      overlay.remove();
+      const warnModal=document.createElement('div');
+      warnModal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10001;display:flex;align-items:center;justify-content:center;padding:1.5rem';
+      warnModal.innerHTML=`
+        <div style="background:var(--ink2);border:1px solid rgba(255,214,10,.3);border-radius:8px;padding:1.2rem;width:100%;max-width:380px">
+          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold);margin-bottom:.5rem">📷 Photo looks well-framed</div>
+          <div style="font-size:.78rem;color:var(--dim);margin-bottom:1rem;line-height:1.6">
+            The comic appears to fill most of the photo (${Math.round(fillPct*100)}%). 
+            You can save it as-is, or use the manual cropper to fine-tune the edges.
+          </div>
+          <div style="display:flex;flex-direction:column;gap:.5rem">
+            <button id="warnSave" class="btn btn-gold">✅ Save As-Is</button>
+            <button id="warnCrop" class="btn btn-primary">✂️ Manual Crop</button>
+            <button id="warnCancel" class="btn btn-ghost" style="color:var(--dim)">✕ Cancel</button>
+          </div>
+        </div>`;
+      document.body.appendChild(warnModal);
+
+      // Still save metadata
+      const idx=DB.comics.findIndex(x=>x.id===id);
+      if(idx!==-1){
+        if(title) DB.comics[idx].title=title;
+        if(issue&&/^\d/.test(issue)) DB.comics[idx].issue=issue.replace(/\D/g,'');
+        if(publisher) DB.comics[idx].publisher=publisher;
+        if(variant) DB.comics[idx].variant=variant;
+      }
+
+      // Crop with what we have anyway (minor cleanup)
+      const autoC=await autoCropImage(base64,ai);
+
+      document.getElementById('warnSave').addEventListener('click',()=>{
+        warnModal.remove();
+        uploadCoverFromBase64(id, autoC);
+        renderCollection();
+        showCoverSavedToast(id, autoC, title, issue);
+      });
+      document.getElementById('warnCrop').addEventListener('click',()=>{
+        warnModal.remove();
+        showCropperModal(id, base64, {x1:Math.max(0,ai.x1),y1:Math.max(0,ai.y1),x2:Math.min(100,ai.x2),y2:Math.min(100,ai.y2)});
+      });
+      document.getElementById('warnCancel').addEventListener('click',()=>{
+        warnModal.remove(); fixCover(id);
+      });
+      return;
     }
 
     const clean=v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown|sorry|visible/i.test(v)?v.trim():'';
