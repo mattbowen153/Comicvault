@@ -3475,7 +3475,6 @@ async function smartCoverCapture(id, base64, mimeType){
     if(e2) e2.textContent=sub||'';
   };
 
-  // Show error and let user decide what to do
   const showError=(msg,sub)=>{
     overlay.remove();
     const errModal=document.createElement('div');
@@ -3491,127 +3490,45 @@ async function smartCoverCapture(id, base64, mimeType){
         </div>
       </div>`;
     document.body.appendChild(errModal);
-    document.getElementById('errManual').addEventListener('click',()=>{ errModal.remove(); showCropperModal(id,base64,{x1:10,y1:10,x2:90,y2:90}); });
+    document.getElementById('errManual').addEventListener('click',()=>{ errModal.remove(); showCropperModal(id,base64,{x1:5,y1:5,x2:95,y2:95}); });
     document.getElementById('errSaveAny').addEventListener('click',()=>{ errModal.remove(); uploadCoverFromBase64(id,base64); });
     document.getElementById('errCancel').addEventListener('click',()=>{ errModal.remove(); fixCover(id); });
   };
 
   try{
     if(!apiKeys.anthropic){
-      showError('API key needed','Add your Anthropic API key in Settings to use auto-crop. Or use Save Photo As-Is to save without cropping.');
+      showError('API key needed','Add your Anthropic API key in Settings → API Keys.');
       return;
     }
 
-    setStep('🤖 Finding comic edges…','Sonnet vision — takes ~5 seconds');
+    // Step 1: Use canvas to auto-trim dark/light borders (no AI needed for this)
+    setStep('✂️ Trimming borders…','Removing solid-color edges');
+    const canvasTrimmed = await canvasTrimBorders(base64);
+
+    // Step 2: AI reads title/publisher from the trimmed image
+    setStep('🤖 Reading cover text…','~5 seconds');
     const res=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',headers:anthropicHeaders(),
       body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',max_tokens:200,
+        model:'claude-sonnet-4-20250514',max_tokens:150,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
-          {type:'text',text:`Look at this photo of a comic book on a surface. I need to crop OUT the background.
-
-Find the 4 edges of the comic cover rectangle and return them as % of the full image dimensions.
-The comic will NOT fill 100% of the photo — there will be background (table, carpet, hand, etc) around it.
-
-Return ONLY this JSON (no other text):
-{"x1":18,"y1":12,"x2":82,"y2":91,"title":"Green Lantern","issue":"101","publisher":"DC","variant":""}
-
-Rules:
-- x1 = where the LEFT edge of the comic is (% from left of photo) — should be > 0
-- y1 = where the TOP edge of the comic is (% from top of photo) — should be > 0  
-- x2 = where the RIGHT edge of the comic is (% from left of photo) — should be < 100
-- y2 = where the BOTTOM edge of the comic is (% from top of photo) — should be < 100
-- The comic should NOT span from 0% to 100% — that means you failed to find it
-- Use "" for title/issue/publisher if you cannot read them`}
+          {type:'text',text:`Read the text on this comic book cover. Return ONLY this JSON:
+{"title":"series name","issue":"number","publisher":"publisher name","variant":""}
+Use "" for anything you cannot read clearly.`}
         ]}]
       })
     });
 
-    if(!res.ok){ throw new Error(`API error ${res.status}`); }
+    if(!res.ok) throw new Error(`API ${res.status}`);
     const data=await res.json();
-    if(data.error){ throw new Error(data.error.message||'API error'); }
+    if(data.error) throw new Error(data.error.message);
 
     const txt=(data.content||[]).map(b=>b.type==='text'?b.text:'').join('').trim();
-    console.log('[SmartCapture] AI response:',txt.slice(0,200));
-
-    // Greedy match — find the LAST/largest JSON object in response
     const matches=[...txt.matchAll(/\{[^{}]*\}/g)];
-    let ai=null;
+    let ai={title:'',issue:'',publisher:'',variant:''};
     for(const m of matches.reverse()){
-      try{
-        const p=JSON.parse(m[0]);
-        if(typeof p.x1==='number'&&typeof p.x2==='number'){ ai=p; break; }
-      }catch(e){}
-    }
-
-    // Validate crop is sensible (not basically the full image)
-    const cropIsValid=ai&&
-      typeof ai.x1==='number'&&typeof ai.x2==='number'&&
-      typeof ai.y1==='number'&&typeof ai.y2==='number'&&
-      ai.x1>=0&&ai.x2<=100&&ai.y1>=0&&ai.y2<=100&&
-      ai.x1<ai.x2&&ai.y1<ai.y2&&
-      (ai.x2-ai.x1)>=10&&(ai.y2-ai.y1)>=10;
-
-    if(!cropIsValid){
-      console.warn('[SmartCapture] Invalid crop coords:',ai);
-      showError('Could not detect comic edges','The AI could not find the comic edges precisely. Try using the manual cropper, or take a clearer photo with the comic flat on a surface.');
-      return;
-    }
-
-    // Check if AI actually found a tight crop or just returned near-full-image
-    const widthCovered=ai.x2-ai.x1;
-    const heightCovered=ai.y2-ai.y1;
-    const fillPct=(widthCovered*heightCovered)/10000;
-    console.log('[SmartCapture] Crop: '+JSON.stringify({x1:ai.x1,y1:ai.y1,x2:ai.x2,y2:ai.y2})+' fills '+Math.round(fillPct*100)+'%');
-
-    if(fillPct>0.88){
-      // AI returned basically full image — detection likely failed
-      // Offer manual crop instead of saving uncropped
-      overlay.remove();
-      const warnModal=document.createElement('div');
-      warnModal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10001;display:flex;align-items:center;justify-content:center;padding:1.5rem';
-      warnModal.innerHTML=`
-        <div style="background:var(--ink2);border:1px solid rgba(255,214,10,.3);border-radius:8px;padding:1.2rem;width:100%;max-width:380px">
-          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold);margin-bottom:.5rem">📷 Photo looks well-framed</div>
-          <div style="font-size:.78rem;color:var(--dim);margin-bottom:1rem;line-height:1.6">
-            The comic appears to fill most of the photo (${Math.round(fillPct*100)}%). 
-            You can save it as-is, or use the manual cropper to fine-tune the edges.
-          </div>
-          <div style="display:flex;flex-direction:column;gap:.5rem">
-            <button id="warnSave" class="btn btn-gold">✅ Save As-Is</button>
-            <button id="warnCrop" class="btn btn-primary">✂️ Manual Crop</button>
-            <button id="warnCancel" class="btn btn-ghost" style="color:var(--dim)">✕ Cancel</button>
-          </div>
-        </div>`;
-      document.body.appendChild(warnModal);
-
-      // Still save metadata
-      const idx=DB.comics.findIndex(x=>x.id===id);
-      if(idx!==-1){
-        if(title) DB.comics[idx].title=title;
-        if(issue&&/^\d/.test(issue)) DB.comics[idx].issue=issue.replace(/\D/g,'');
-        if(publisher) DB.comics[idx].publisher=publisher;
-        if(variant) DB.comics[idx].variant=variant;
-      }
-
-      // Crop with what we have anyway (minor cleanup)
-      const autoC=await autoCropImage(base64,ai);
-
-      document.getElementById('warnSave').addEventListener('click',()=>{
-        warnModal.remove();
-        uploadCoverFromBase64(id, autoC);
-        renderCollection();
-        showCoverSavedToast(id, autoC, title, issue);
-      });
-      document.getElementById('warnCrop').addEventListener('click',()=>{
-        warnModal.remove();
-        showCropperModal(id, base64, {x1:Math.max(0,ai.x1),y1:Math.max(0,ai.y1),x2:Math.min(100,ai.x2),y2:Math.min(100,ai.y2)});
-      });
-      document.getElementById('warnCancel').addEventListener('click',()=>{
-        warnModal.remove(); fixCover(id);
-      });
-      return;
+      try{ const p=JSON.parse(m[0]); if(p.title!==undefined){ai=p;break;} }catch(e){}
     }
 
     const clean=v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown|sorry|visible/i.test(v)?v.trim():'';
@@ -3629,21 +3546,18 @@ Rules:
       if(variant) DB.comics[idx].variant=variant;
     }
 
-    setStep('✂️ Cropping…', `Detected: ${title||'comic'}${issue?' #'+issue:''} — edges at ${Math.round(ai.x1)}%,${Math.round(ai.y1)}% → ${Math.round(ai.x2)}%,${Math.round(ai.y2)}%`);
-    const cropped=await autoCropImage(base64,ai);
+    setStep('✅ Saving cover…','');
 
-    // Save automatically
-    setStep('✅ Saving…','');
+    // Save the canvas-trimmed version
     const cidx=DB.comics.findIndex(x=>x.id===id);
     if(cidx!==-1){
-      DB.comics[cidx].image=cropped;
+      DB.comics[cidx].image=canvasTrimmed;
       DB.comics[cidx].coverAttempted=true;
       saveDB();
     }
 
-    // Upload to Drive in background
-    if(gdriveToken&&cropped.startsWith('data:')){
-      gdriveUploadPhoto(id,title,issue,cropped).then(result=>{
+    if(gdriveToken&&canvasTrimmed.startsWith('data:')){
+      gdriveUploadPhoto(id,title,issue,canvasTrimmed).then(result=>{
         if(result){
           const i2=DB.comics.findIndex(x=>x.id===id);
           if(i2!==-1){ DB.comics[i2].drivePhotoUrl=result.url; DB.comics[i2].driveFileId=result.fileId; DB.comics[i2].image=''; saveDB(); }
@@ -3653,15 +3567,110 @@ Rules:
 
     overlay.remove();
     renderCollection();
-    showCoverSavedToast(id, cropped, title, issue);
+    showCoverSavedToast(id, canvasTrimmed, title, issue);
 
   }catch(err){
-    console.error('[SmartCapture] Error:',err);
+    console.error('[SmartCapture]',err.message);
     const msg=err.message||'Unknown error';
-    if(msg.includes('API')){ showError('API Error',msg+' — check your Anthropic key in Settings.'); }
-    else if(msg.includes('fetch')||msg.includes('network')){ showError('Network Error','Could not reach the AI. Check your internet connection.'); }
-    else { showError('Something went wrong',msg+' — try the manual cropper or save as-is.'); }
+    if(msg.includes('API')||msg.includes('401')||msg.includes('403')){
+      showError('API Error',msg+' — check your Anthropic key in Settings.');
+    } else if(msg.includes('fetch')||msg.includes('Failed to fetch')){
+      showError('Network Error','Could not reach the AI. Check your connection.');
+    } else {
+      showError('Something went wrong',msg);
+    }
   }
+}
+
+// Smart canvas border trimmer — removes solid-color edges (dark background, white table)
+// Works entirely in the browser with no API calls
+function canvasTrimBorders(base64){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const W=img.width, H=img.height;
+      // Draw to canvas to read pixels
+      const tmp=document.createElement('canvas');
+      tmp.width=W; tmp.height=H;
+      const ctx=tmp.getContext('2d');
+      ctx.drawImage(img,0,0);
+
+      // Sample pixels along each edge to find where background ends
+      const TOLERANCE=35; // color difference to consider "different from edge"
+      const SAMPLE_STEP=4; // check every 4th pixel for speed
+
+      // Get the background color from the corner (top-left 3x3 average)
+      let rSum=0,gSum=0,bSum=0,count=0;
+      for(let sx=0;sx<Math.min(8,W);sx+=2){
+        for(let sy=0;sy<Math.min(8,H);sy+=2){
+          const d=ctx.getImageData(sx,sy,1,1).data;
+          rSum+=d[0];gSum+=d[1];bSum+=d[2];count++;
+        }
+      }
+      const bgR=rSum/count, bgG=gSum/count, bgB=bSum/count;
+
+      const isDifferent=(r,g,b)=>Math.abs(r-bgR)+Math.abs(g-bgG)+Math.abs(b-bgB)>TOLERANCE*3;
+
+      // Find top edge
+      let top=0;
+      outer: for(let y=0;y<H;y+=SAMPLE_STEP){
+        for(let x=Math.floor(W*0.1);x<W*0.9;x+=SAMPLE_STEP){
+          const d=ctx.getImageData(x,y,1,1).data;
+          if(isDifferent(d[0],d[1],d[2])){ top=Math.max(0,y-SAMPLE_STEP); break outer; }
+        }
+      }
+      // Find bottom edge
+      let bottom=H;
+      outer2: for(let y=H-1;y>=0;y-=SAMPLE_STEP){
+        for(let x=Math.floor(W*0.1);x<W*0.9;x+=SAMPLE_STEP){
+          const d=ctx.getImageData(x,y,1,1).data;
+          if(isDifferent(d[0],d[1],d[2])){ bottom=Math.min(H,y+SAMPLE_STEP); break outer2; }
+        }
+      }
+      // Find left edge
+      let left=0;
+      outer3: for(let x=0;x<W;x+=SAMPLE_STEP){
+        for(let y=Math.floor(H*0.1);y<H*0.9;y+=SAMPLE_STEP){
+          const d=ctx.getImageData(x,y,1,1).data;
+          if(isDifferent(d[0],d[1],d[2])){ left=Math.max(0,x-SAMPLE_STEP); break outer3; }
+        }
+      }
+      // Find right edge
+      let right=W;
+      outer4: for(let x=W-1;x>=0;x-=SAMPLE_STEP){
+        for(let y=Math.floor(H*0.1);y<H*0.9;y+=SAMPLE_STEP){
+          const d=ctx.getImageData(x,y,1,1).data;
+          if(isDifferent(d[0],d[1],d[2])){ right=Math.min(W,x+SAMPLE_STEP); break outer4; }
+        }
+      }
+
+      const sw=right-left;
+      const sh=bottom-top;
+      const trimPct=1-(sw*sh)/(W*H);
+
+      console.log('[CanvasTrim] bg='+Math.round(bgR)+','+Math.round(bgG)+','+Math.round(bgB)+
+        ' crop='+left+','+top+' → '+right+','+bottom+' trimmed='+Math.round(trimPct*100)+'%');
+
+      // Only use trim if it actually removed something meaningful (>3%) but not too aggressive (>60%)
+      if(trimPct<0.03||trimPct>0.6||sw<50||sh<50){
+        // Trim didn't work well — return original
+        console.log('[CanvasTrim] Skipping trim, using original');
+        resolve(base64);
+        return;
+      }
+
+      // Draw cropped result at comic 2:3 ratio
+      const out=document.createElement('canvas');
+      out.width=400; out.height=600;
+      const outCtx=out.getContext('2d');
+      outCtx.fillStyle='#000';
+      outCtx.fillRect(0,0,400,600);
+      outCtx.drawImage(img,left,top,sw,sh,0,0,400,600);
+      resolve(out.toDataURL('image/jpeg',0.93));
+    };
+    img.onerror=()=>resolve(base64);
+    img.src=base64;
+  });
 }
 
 function showCoverSavedToast(id, cropped, title, issue){
