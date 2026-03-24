@@ -3444,91 +3444,72 @@ function openCoverCropper(id, input){
 }
 
 async function smartCoverCapture(id, base64, mimeType){
-  const comic = DB.comics.find(x=>x.id===id);
-
   const overlay = document.createElement('div');
   overlay.id = 'smartCaptureOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:10001;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem';
-  overlay.innerHTML = `<div style="width:48px;height:48px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div><div style="color:#ffd60a;font-family:'Barlow Condensed';font-weight:700;font-size:1rem">✂️ Saving cover…</div>`;
+  overlay.innerHTML = '<div style="width:48px;height:48px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div><div style="color:#ffd60a;font-family:Barlow Condensed,sans-serif;font-weight:700;font-size:1rem">Cropping...</div>';
   document.body.appendChild(overlay);
 
   try{
-    // Crop to 2:3 ratio — pure canvas, always fast
+    // Crop to 2:3 ratio - pure canvas, instant, no network
     const cropped = await centerCropTo2x3(base64);
 
-    // Save immediately — don't wait for AI or Drive
+    // Save to comic - NO Drive upload here
     const idx = DB.comics.findIndex(x=>x.id===id);
     if(idx !== -1){
       DB.comics[idx].image = cropped;
       DB.comics[idx].coverUrl = '';
-      DB.comics[idx].drivePhotoUrl = '';
       DB.comics[idx].coverAttempted = true;
+      // Leave drivePhotoUrl alone - don't touch it
     }
     saveDB();
     overlay.remove();
     renderCollection();
-    toast('✅ Cover saved!');
+    toast('Cover saved!', 'success', 3000);
 
-    // Upload to Drive in background — only clear image AFTER confirmed
-    if(gdriveToken && cropped.startsWith('data:')){
-      const title = comic?.title||'';
-      const issue = comic?.issue||'';
-      gdriveUploadPhoto(id, title, issue, cropped).then(result=>{
-        if(result && result.url){
-          const i2 = DB.comics.findIndex(x=>x.id===id);
-          if(i2 !== -1){
-            DB.comics[i2].drivePhotoUrl = result.url;
-            DB.comics[i2].driveFileId = result.fileId;
-            DB.comics[i2].image = '';
-            saveDB(); renderCollection();
-          }
-        }
-      }).catch(()=>{});
-    }
-
-    // Read title via AI using a tiny thumbnail (not the full 5MB photo)
+    // Read title from tiny thumbnail - fully non-blocking, never delays save
     if(apiKeys.anthropic){
-      try{
-        const thumb = await resizeTo200px(base64);
-        const res = await fetch('https://api.anthropic.com/v1/messages',{
+      resizeTo200px(base64).then(thumb=>
+        fetch('https://api.anthropic.com/v1/messages',{
           method:'POST', headers:anthropicHeaders(),
           body:JSON.stringify({
             model:'claude-haiku-4-5-20251001', max_tokens:80,
             messages:[{role:'user',content:[
               {type:'image',source:{type:'base64',media_type:'image/jpeg',data:thumb.split(',')[1]}},
-              {type:'text',text:'What comic is this? Return ONLY JSON: {"title":"","issue":"","publisher":""}'}
+              {type:'text',text:'Comic title, issue, publisher? JSON only: {"title":"","issue":"","publisher":""}'}
             ]}]
           })
-        });
-        if(res.ok){
-          const data = await res.json();
-          const txt = (data.content||[]).map(b=>b.text||'').join('').trim();
-          const m = txt.match(/\{[^}]+\}/);
-          if(m){
-            const p = JSON.parse(m[0]);
-            const clean = v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown/i.test(v)?v.trim():'';
-            const i3 = DB.comics.findIndex(x=>x.id===id);
-            if(i3 !== -1){
-              if(clean(p.title)) DB.comics[i3].title = p.title;
-              if(clean(p.issue)) DB.comics[i3].issue = p.issue.replace(/\D/g,'');
-              if(clean(p.publisher)) DB.comics[i3].publisher = p.publisher;
-              saveDB(); renderCollection();
-            }
+        })
+      ).then(r=>r.ok?r.json():null).then(data=>{
+        if(!data) return;
+        const txt=(data.content||[]).map(b=>b.text||'').join('');
+        const m=txt.match(/\{[^}]+\}/);
+        if(!m) return;
+        try{
+          const p=JSON.parse(m[0]);
+          const clean=v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown/i.test(v)?v.trim():'';
+          const i2=DB.comics.findIndex(x=>x.id===id);
+          if(i2!==-1){
+            if(clean(p.title)) DB.comics[i2].title=p.title;
+            if(clean(p.issue)) DB.comics[i2].issue=p.issue.replace(/\D/g,'');
+            if(clean(p.publisher)) DB.comics[i2].publisher=p.publisher;
+            saveDB(); renderCollection();
           }
-        }
-      }catch(e){}
+        }catch(e){}
+      }).catch(()=>{});
     }
 
   }catch(err){
     overlay.remove();
-    console.error('[SmartCapture]', err);
+    console.error('[SmartCapture]',err);
     try{
-      const i = DB.comics.findIndex(x=>x.id===id);
-      if(i !== -1){ DB.comics[i].image = base64; saveDB(); renderCollection(); }
-    }catch(e2){}
-    toast('✅ Photo saved');
+      const i=DB.comics.findIndex(x=>x.id===id);
+      if(i!==-1){ DB.comics[i].image=base64; saveDB(); renderCollection(); }
+    }catch(e){}
+    toast('Photo saved');
   }
 }
+
 
 function resizeTo200px(base64){
   return new Promise(resolve=>{
