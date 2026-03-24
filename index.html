@@ -7669,36 +7669,75 @@ async function lookupBarcode(barcode){
   if(!comicData){
     progress('Asking AI (Image, Dark Horse, IDW, Valiant specialist knowledge)…');
     tried.push('AI Specialist');
-    comicData=await lookupViaAI(barcode);
+    try{
+      comicData=await lookupViaAI(barcode);
+    }catch(e){
+      console.warn('AI lookup error:', e);
+      // Log which services we tried for debugging
+      console.log('[ComicVault] Barcode lookup tried:', tried.join(', '));
+    }
   }
 
   // Save to cache if found
   if(comicData){
     barcodeCache[barcode]=comicData;
     try{ localStorage.setItem('cvp_barcode_cache', JSON.stringify(barcodeCache)); }catch(e){}
+  } else {
+    console.log('[ComicVault] Barcode not found in any database. Tried:', tried.join(', '));
   }
-  renderBarcodeResult(comicData, barcode);
+  renderBarcodeResult(comicData, barcode, tried);
 }
 
-function renderBarcodeResult(comicData, barcode){
+function renderBarcodeResult(comicData, barcode, triedServices=[]){
   const resultDiv=document.getElementById('scanResult');
   const resultBody=document.getElementById('scanResultBody');
   resultDiv.style.display='block';
 
   if(!comicData){
     const hasCVKey = !!apiKeys.comicvine;
+    const hasAntKey = !!apiKeys.anthropic;
+    const isLocalFile = location.href.startsWith('file://') || location.href.startsWith('content://');
+    
+    let blockMsg = '';
+    if(isLocalFile && !hasAntKey){
+      blockMsg = `
+        <div style="padding:1rem;background:rgba(255,149,0,.08);border:1px solid rgba(255,149,0,.25);border-radius:4px;margin-bottom:1rem;font-size:.8rem;line-height:1.6;color:var(--paper2)">
+          <div style="font-weight:700;color:var(--orange);margin-bottom:.5rem">⚠ Opened from Downloads — Internet blocked</div>
+          Chrome blocks database lookups when files are opened from your computer. Barcode scanning and AI identification need https://.
+          <div style="margin-top:.6rem">
+            <strong style="color:var(--gold)">Fix in 2 min (free):</strong> Go to <strong style="color:var(--blue)">app.netlify.com/drop</strong> → drag your HTML file → copy the https:// link → open on your phone.
+          </div>
+        </div>`;
+    }
+
     resultBody.innerHTML=`
+      ${blockMsg}
       <div style="padding:1rem;color:var(--accent2);font-size:.85rem;line-height:1.7">
-        ⚠ Barcode <strong>${barcode}</strong> not found in databases.
+        ⚠ Barcode <strong>${barcode}</strong> not found in ${isLocalFile && !hasAntKey ? 'available' : 'any'} databases.
       </div>
+      ${triedServices && triedServices.length > 0 ? `
+        <div style="margin:.8rem 0;padding:.6rem .9rem;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:3px;font-size:.75rem;color:var(--dim)">
+          <strong>Tried:</strong> ${triedServices.join(' → ')}
+          <br><span style="font-size:.7rem">If any service shows ⚠, it either doesn't have this comic, or your settings are missing.</span>
+        </div>
+      ` : ''}
       <div style="padding:.8rem 1rem;background:rgba(255,255,255,.03);border:1px solid var(--border);font-size:.8rem;color:var(--paper2);margin:.5rem 0;line-height:1.6">
-        <strong style="color:var(--paper)">💡 Best fix:</strong> Use the <strong>🖼️ Cover Scan</strong> tab — photograph the front cover and AI reads everything directly.
-        ${!hasCVKey?'<br><br><strong>Or:</strong> Add a free Comic Vine key in Settings for better barcode coverage.':''}
+        ${isLocalFile ? `
+          <strong style="color:var(--paper)">🚀 Best workaround RIGHT NOW:</strong><br>
+          Switch to <strong>🖼️ Cover Scan</strong> tab — photograph the front cover and AI reads title, issue, publisher directly (no internet needed).
+        ` : `
+          <strong style="color:var(--paper)">💡 Why it wasn't found:</strong><br>
+          • New variant editions not yet indexed<br>
+          • Regional/exclusive prints<br>
+          • Comic Vine key not set up (add in ⚙️ Settings)<br>
+          <br>
+          <strong style="color:var(--gold)">Best fix:</strong> Use <strong>🖼️ Cover Scan</strong> — photograph the cover and AI identifies it perfectly.
+        `}
       </div>
       <div style="display:flex;gap:.7rem;flex-wrap:wrap;padding:.5rem 0">
-        <button class="btn btn-primary" onclick="openAdd()">+ Add Manually</button>
+        <button class="btn btn-primary" onclick="openAdd()">✏️ Add Manually</button>
         <button class="btn btn-gold" onclick="switchToCoverScan()">🖼️ Try Cover Scan</button>
-        ${!hasCVKey?`<button class="btn btn-ghost" onclick="nav(document.querySelector('[data-page=settings]'))">⚙️ Add Comic Vine Key</button>`:''}
+        ${!hasCVKey && !isLocalFile ? `<button class="btn btn-ghost" onclick="nav(document.querySelector('[data-page=settings]'))">⚙️ Add Comic Vine Key</button>` : ''}
       </div>`;
     return;
   }
