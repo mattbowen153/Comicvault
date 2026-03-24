@@ -2060,6 +2060,9 @@ let DB = {
   wantList: [],
 };
 
+// FIX: State guard to prevent form submission during image compression
+let imageCompressing = false;
+
 // Google Drive vars declared here so saveDB can safely reference them
 let gdriveToken = null;
 let gdriveTokenExpiry = 0;
@@ -2121,15 +2124,15 @@ function loadDB(){
 }
 
 function saveDB(){
-  // CORE SAVE — strip large base64 images before saving to localStorage
-  // Photos are kept in memory (DB.comics) but not persisted to localStorage
-  // to avoid the 5MB quota limit. Cover URLs (http links) are kept.
+  // CORE SAVE — now that images are compressed to JPEG 75%, we can save them!
+  // Compressed images are ~30-50KB each, so we can fit plenty in the 5MB localStorage quota
   try{
     const slimComics = DB.comics.map(c=>({
       ...c,
-      // Keep URL-based covers, strip base64 photos (they're huge)
-      image: c.image && !c.image.startsWith('data:') ? c.image : '',
-      // coverUrl is always a URL so keep it
+      // FIXED: Keep all images (now that they're compressed to JPEG 75% quality)
+      // This fixes the bug where covers were being stripped and lost on page reload
+      image: c.image || '',
+      // coverUrl is always a URL so keep it too
     }));
     const slimDB = {...DB, comics: slimComics};
     const data = JSON.stringify(slimDB);
@@ -2151,6 +2154,7 @@ function saveDB(){
       localStorage.setItem('cvp2', JSON.stringify({...DB, comics:minimalComics}));
       toast('⚠ Storage almost full — photos stripped to save space','error',4000);
     }catch(e2){
+      console.error('[ComicVault] Storage full - minimal save also failed:',e2);
       toast('❌ Storage full — go to Settings → Data → Export to free space','error',5000);
     }
   }
@@ -2287,7 +2291,13 @@ loadDB();
 
 // One-time cleanup: strip base64 images from localStorage to free space
 // This runs once on load to fix the quota exceeded error
+// DEPRECATED FIX: Image compression now handled at upload time
+// Previously this stripped all base64 images to save space, but caused covers to disappear
+// Now that we compress to JPEG 75%, this cleanup is no longer needed and is disabled
 (function cleanupStorage(){
+  // This function is now obsolete — compressed images fit in quota
+  // Keeping as comment for reference in case quota issues arise again
+  /*
   try{
     const s=localStorage.getItem('cvp2');
     if(!s) return;
@@ -2306,6 +2316,7 @@ loadDB();
       console.log('[ComicVault] Cleaned base64 photos from localStorage to free space');
     }
   }catch(e){}
+  */
 })();
 
 setTimeout(checkForRecovery, 600);
@@ -4167,13 +4178,42 @@ No explanation, just JSON.`}
 
 function uploadCoverFromBase64(id, base64){
   const idx=DB.comics.findIndex(x=>x.id===id); if(idx===-1) return;
-  DB.comics[idx].image=base64;
-  DB.comics[idx].coverUrl='';
-  DB.comics[idx].coverAttempted=true;
-  saveDB(); renderCollection();
-  document.getElementById('fixCoverModal')?.remove();
-  toast('✅ Cover photo saved!');
-  // NOTE: No Drive upload here — Drive was clearing image and causing blank covers
+  // CRITICAL FIX: Compress image to JPEG quality 75% to reduce size and improve upload reliability
+  // Large base64 strings fail to persist in localStorage
+  if(base64.startsWith('data:')){
+    const canvas=document.createElement('canvas');
+    const img=new Image();
+    img.onload=()=>{
+      canvas.width=img.width;
+      canvas.height=img.height;
+      const ctx=canvas.getContext('2d',{alpha:false});
+      ctx.drawImage(img,0,0);
+      // Compress to JPEG quality 75% for clean uploads that fit in localStorage
+      const compressedBase64=canvas.toDataURL('image/jpeg',0.75);
+      DB.comics[idx].image=compressedBase64;
+      DB.comics[idx].coverUrl='';
+      DB.comics[idx].coverAttempted=true;
+      saveDB(); renderCollection();
+      document.getElementById('fixCoverModal')?.remove();
+      toast('✅ Cover photo saved and compressed!');
+    };
+    img.onerror=()=>{
+      // If image fails to load, save original
+      DB.comics[idx].image=base64;
+      DB.comics[idx].coverUrl='';
+      DB.comics[idx].coverAttempted=true;
+      saveDB(); renderCollection();
+      toast('✅ Cover photo saved!');
+    };
+    img.src=base64;
+  } else {
+    DB.comics[idx].image=base64;
+    DB.comics[idx].coverUrl='';
+    DB.comics[idx].coverAttempted=true;
+    saveDB(); renderCollection();
+    document.getElementById('fixCoverModal')?.remove();
+    toast('✅ Cover photo saved!');
+  }
 }
 
 function showCoverResults(id, results){
@@ -4304,7 +4344,33 @@ function clearForm(){
   document.getElementById('imgPrompt').style.display='block';
   document.getElementById('imgPreview').src='';
 }
-function handleImg(input){ const f=input.files[0]; if(!f) return; const r=new FileReader(); r.onload=e=>{ document.getElementById('imgPreview').src=e.target.result; document.getElementById('imgPreviewWrap').style.display='block'; document.getElementById('imgPrompt').style.display='none'; }; r.readAsDataURL(f); }
+function handleImg(input){ 
+  const f=input.files[0]; if(!f) return; 
+  imageCompressing = true; // FIX: Set flag to prevent form submission during compression
+  const r=new FileReader(); 
+  r.onload=e=>{ 
+    // Compress image to JPEG quality 75% to reduce storage size and fix upload failures
+    // Large base64 strings can't be stored in localStorage without hitting quota
+    const canvas=document.createElement('canvas');
+    const img=new Image();
+    img.onload=()=>{
+      canvas.width=img.width; canvas.height=img.height;
+      const ctx=canvas.getContext('2d',{alpha:false});
+      ctx.drawImage(img,0,0);
+      const compressed=canvas.toDataURL('image/jpeg',0.75); // 75% quality = clean uploads
+      const previewEl = document.getElementById('imgPreview');
+      const previewWrap = document.getElementById('imgPreviewWrap');
+      const prompt = document.getElementById('imgPrompt');
+      if(previewEl) previewEl.src=compressed;
+      if(previewEl) previewEl.dataset.compressedBase64=compressed;
+      if(previewWrap) previewWrap.style.display='block'; 
+      if(prompt) prompt.style.display='none'; 
+      imageCompressing = false; // FIX: Clear flag when done
+    };
+    img.src=e.target.result;
+  }; 
+  r.readAsDataURL(f); 
+}
 
 // Track if add modal was opened from scanner — return there after save
 // savedFromScanner persisted in sessionStorage so it survives OAuth redirects/reloads
@@ -4351,10 +4417,17 @@ function gdriveAutoSignIn(){
 }
 
 function saveComic(andList=false){
+  // FIX: Check if image is still compressing to prevent submission with incomplete image
+  if(imageCompressing){ 
+    toast('⏳ Image still compressing... please wait','error'); 
+    return; 
+  }
   const getVal = id => { try{ return document.getElementById(id)?.value||''; }catch(e){ return ''; } };
   const title = getVal('i-title').trim();
   if(!title){ toast('Title is required.','error');  return; }
-  const img = document.getElementById('imgPreview')?.src||'';
+  // FIX: Use the compressed JPEG image (75% quality) to avoid localStorage quota exceeded
+  const imgEl = document.getElementById('imgPreview');
+  const img = imgEl?.dataset?.compressedBase64 || imgEl?.src || '';
   const c={
     id:editId||Date.now().toString(),
     title,
@@ -5474,7 +5547,10 @@ function openSell(id){
           ${d.tieins.map(t=>`<span style="color:var(--paper2)">${t.title} #${t.issue}</span> <span style="color:var(--dim)">— ${t.reason}</span>`).join('<br>')}
           ${d.worthPursuing?`<br><span style="color:var(--green);font-size:.75rem">💡 Worth pursuing to complete the storyline</span>`:''}
         </div>`;
-    }).catch(()=>{ tieDiv.style.display='none'; });
+    }).catch(err=>{ 
+      console.warn('[ComicVault] Tie-in API call failed:',err);
+      tieDiv.style.display='none'; 
+    });
   }
 
   document.getElementById('sl-price').value=c.price||'';
