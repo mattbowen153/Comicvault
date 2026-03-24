@@ -584,6 +584,50 @@ body {
 .plat-name{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:.8rem;letter-spacing:1px;}
 .plat-fee{font-size:.65rem;color:var(--dim);margin-top:2px;}
 
+/* ───── CROP TOOL ───── */
+.crop-wrapper{
+  position:relative;width:100%;max-width:450px;margin:0 auto;
+  background:var(--panel);border:1px solid var(--border);border-radius:4px;overflow:hidden;
+}
+.crop-container{
+  position:relative;width:100%;aspect-ratio:2/3;background:#000;overflow:hidden;
+}
+.crop-image{
+  position:absolute;width:100%;height:100%;object-fit:contain;
+  cursor:move;user-select:none;
+}
+.crop-overlay{
+  position:absolute;inset:0;
+  background:linear-gradient(0deg,rgba(0,0,0,0.5),rgba(0,0,0,0.5));
+  pointer-events:none;display:flex;align-items:center;justify-content:center;
+}
+.crop-frame{
+  position:absolute;border:2px solid var(--gold);box-shadow:0 0 20px rgba(0,0,0,0.8);
+  width:85%;height:85%;
+}
+.crop-handle{
+  position:absolute;width:12px;height:12px;background:var(--gold);border-radius:2px;
+  cursor:nwse-resize;z-index:2;
+}
+.crop-handle.tl{top:-6px;left:-6px;}
+.crop-handle.tr{top:-6px;right:-6px;cursor:nesw-resize;}
+.crop-handle.bl{bottom:-6px;left:-6px;cursor:nesw-resize;}
+.crop-handle.br{bottom:-6px;right:-6px;}
+.crop-controls{
+  padding:1rem;display:flex;gap:.7rem;flex-wrap:wrap;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.02);border-top:1px solid var(--border);
+}
+.crop-btn{
+  font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:.75rem;
+  letter-spacing:1px;text-transform:uppercase;padding:.5rem 1rem;
+  border:none;cursor:pointer;transition:all .15s;border-radius:3px;
+}
+.crop-use{background:var(--green);color:#000;}
+.crop-use:hover{background:var(--gold);}
+.crop-adjust{background:var(--panel2);color:var(--paper2);border:1px solid var(--border);}
+.crop-adjust:hover{border-color:var(--gold);}
+.crop-reset{background:rgba(255,255,255,.05);color:var(--dim);border:1px solid var(--border);}
+
 /* ───── LOADING ───── */
 .spin-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:3rem;}
 /* Toast notifications */
@@ -2044,6 +2088,40 @@ body {
       <div class="info-box mb-md">Comics you're hunting for. Use this as a shopping list at cons, comic shops, or online.</div>
       <div id="wantList"></div>
       <div class="empty-state" id="emptyWant" style="display:none"><div class="empty-icon">⭐</div><div class="empty-txt">Want list is empty — click missing issues to add them</div></div>
+</div>
+</div>
+
+<!-- ══ CROP TOOL MODAL ══ -->
+<div class="modal-bg" id="cropModal" style="align-items:center">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-hdr">
+      <div class="modal-title">✂️ Crop Cover</div>
+      <button class="modal-x" onclick="closeCropTool()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="padding:.7rem 1rem;background:rgba(72,149,239,.06);border:1px solid rgba(72,149,239,.25);border-radius:4px;margin-bottom:1rem;font-size:.78rem;color:var(--paper2);line-height:1.6">
+        <strong style="color:var(--blue)">Auto-cropped to comic cover size</strong> (2:3 ratio). Drag the corner handles to adjust if needed, then tap <strong>Use This</strong> to save.
+      </div>
+      
+      <div class="crop-wrapper">
+        <div class="crop-container" id="cropContainer" style="cursor:grab;cursor:-webkit-grab">
+          <img id="cropImage" style="position:absolute;max-width:none;cursor:grab;cursor:-webkit-grab" draggable="false" onmousedown="cropStartDrag(event)" ontouchstart="cropStartDrag(event)">
+          <div class="crop-overlay">
+            <div class="crop-frame" id="cropFrame">
+              <div class="crop-handle tl" onmousedown="cropStartResize(event,'tl')" ontouchstart="cropStartResize(event,'tl')"></div>
+              <div class="crop-handle tr" onmousedown="cropStartResize(event,'tr')" ontouchstart="cropStartResize(event,'tr')"></div>
+              <div class="crop-handle bl" onmousedown="cropStartResize(event,'bl')" ontouchstart="cropStartResize(event,'bl')"></div>
+              <div class="crop-handle br" onmousedown="cropStartResize(event,'br')" ontouchstart="cropStartResize(event,'br')"></div>
+            </div>
+          </div>
+        </div>
+        <div class="crop-controls">
+          <button class="crop-btn crop-use" onclick="applyCrop()">✅ Use This</button>
+          <button class="crop-btn crop-adjust" onclick="toggleAdvancedCrop()">🎯 Fine Tune</button>
+          <button class="crop-btn crop-reset" onclick="resetCrop()">↺ Reset</button>
+          <button class="crop-btn" onclick="tryBarcodeDetect()" style="background:rgba(100,150,255,.15);color:var(--blue);border:1px solid rgba(100,150,255,.3);font-size:.7rem">📱 Read Barcode</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -6573,10 +6651,10 @@ async function scanFromPhoto(input, mode='barcode'){
     previewWrap.style.display='block';
 
     if(isCover){
-      // Cover mode — skip barcode entirely, go straight to AI cover reading
-      status.textContent='🖼️ Reading cover with AI…';
+      // Cover mode — show crop tool first for better accuracy
+      status.textContent='✂️ Crop the cover to remove borders…';
       status.style.color='var(--gold)';
-      await scanCoverViaAI(e.target.result, status);
+      initCropTool(e.target.result, true);
       return;
     }
 
@@ -6585,24 +6663,448 @@ async function scanFromPhoto(input, mode='barcode'){
     status.style.color='var(--gold)';
     try{
       if(!window.ZXing) await loadScript('https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js');
-      const hints=new Map();
-      hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
-      const zxReader=new ZXing.BrowserMultiFormatReader(hints);
-      const imgEl=new Image(); imgEl.src=e.target.result;
-      await new Promise(r=>{imgEl.onload=r;});
-      const result=await zxReader.decodeFromImageElement(imgEl);
-      const code=result.getText();
-      status.textContent='✅ Barcode found: '+code;
-      status.style.color='var(--green)';
+      
+      // Create canvas for preprocessing
+      const img = new Image();
+      img.src = e.target.result;
+      await new Promise(r=>{img.onload=r;});
+      
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      
+      // Enhance contrast for better barcode detection
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      const threshold = 128;
+      for(let i = 0; i < data.length; i += 4){
+        const gray = data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114;
+        const val = gray > threshold ? 255 : 0;
+        data[i] = data[i+1] = data[i+2] = val;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      
+      // Try with multiple hint combinations for better detection
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+        ZXing.BarcodeFormat.UPC_A,
+        ZXing.BarcodeFormat.UPC_E,
+        ZXing.BarcodeFormat.EAN_13,
+        ZXing.BarcodeFormat.EAN_8,
+        ZXing.BarcodeFormat.CODE_128,
+        ZXing.BarcodeFormat.CODE_39
+      ]);
+      
+      const zxReader = new ZXing.BrowserMultiFormatReader(hints);
+      let result = null;
+      
+      try{
+        // Try on enhanced contrast image
+        result = await zxReader.decodeFromImageElement(canvas);
+      }catch(e1){
+        // Fallback: try original image
+        result = await zxReader.decodeFromImageElement(img);
+      }
+      
+      const code = result.getText();
+      status.textContent = '✅ Barcode found: ' + code;
+      status.style.color = 'var(--green)';
       await lookupBarcode(code);
     }catch(err){
       // ZXing failed — ask AI to read the barcode digits, and also read the cover as backup
-      status.textContent='🤖 No barcode detected — asking AI to read the image…';
-      status.style.color='var(--gold)';
+      status.textContent = '🤖 No barcode detected — asking AI to read the image…';
+      status.style.color = 'var(--gold)';
       await scanImageViaAI(e.target.result, status);
     }
   };
   reader.readAsDataURL(file);
+}
+
+// ══════════════════════════════════
+// CROP TOOL - Smart image cropping
+// ══════════════════════════════════
+let cropState = {
+  originalBase64: null,
+  originalCanvas: null,
+  isCover: false,
+  frameX: 0,
+  frameY: 0,
+  frameW: 0,
+  frameH: 0,
+  isDragging: false,
+  dragHandle: null,
+  imageX: 0,
+  imageY: 0,
+};
+
+let cropStartDrag_tracking = null;
+
+function cropStartDrag(e){
+  e.preventDefault();
+  cropStartDrag_tracking = {
+    startX: e.touches ? e.touches[0].clientX : e.clientX,
+    startY: e.touches ? e.touches[0].clientY : e.clientY,
+    initialX: cropState.imageX || 0,
+    initialY: cropState.imageY || 0,
+  };
+  
+  document.addEventListener('mousemove', cropDragImage);
+  document.addEventListener('mouseup', cropEndDrag);
+  document.addEventListener('touchmove', cropDragImage);
+  document.addEventListener('touchend', cropEndDrag);
+}
+
+function cropDragImage(e){
+  if(!cropStartDrag_tracking) return;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  
+  const dx = clientX - cropStartDrag_tracking.startX;
+  const dy = clientY - cropStartDrag_tracking.startY;
+  
+  const cropImage = document.getElementById('cropImage');
+  if(cropImage){
+    cropState.imageX = cropStartDrag_tracking.initialX + dx;
+    cropState.imageY = cropStartDrag_tracking.initialY + dy;
+    cropImage.style.left = cropState.imageX + 'px';
+    cropImage.style.top = cropState.imageY + 'px';
+  }
+}
+
+function cropEndDrag(){
+  cropStartDrag_tracking = null;
+  document.removeEventListener('mousemove', cropDragImage);
+  document.removeEventListener('mouseup', cropEndDrag);
+  document.removeEventListener('touchmove', cropDragImage);
+  document.removeEventListener('touchend', cropEndDrag);
+}
+
+function initCropTool(base64, isCover=false){
+  cropState.originalBase64 = base64;
+  cropState.isCover = isCover;
+  
+  const Container = document.getElementById('cropContainer');
+  const cropImageEl = document.getElementById('cropImage');
+  const cropFrame = document.getElementById('cropFrame');
+  
+  // Load image and auto-crop
+  const img = new Image();
+  img.onload = ()=>{
+    // Calculate aspect ratio for comic (2:3 - width:height)
+    const containerW = Container.offsetWidth;
+    const containerH = Container.offsetHeight; // This is 2:3 ratio from CSS
+    
+    // Calculate crop area with 85% of container (matches CSS)
+    const frameW = containerW * 0.85;
+    const frameH = containerH * 0.85;
+    
+    // Center the frame
+    const frameX = (containerW - frameW) / 2;
+    const frameY = (containerH - frameH) / 2;
+    
+    // Store state
+    cropState.frameX = frameX;
+    cropState.frameY = frameY;
+    cropState.frameW = frameW;
+    cropState.frameH = frameH;
+    cropState.originalCanvas = img;
+    
+    // Set image size to fit container
+    cropImageEl.src = base64;
+    cropImageEl.style.width = containerW + 'px';
+    cropImageEl.style.height = 'auto';
+    
+    // Update frame position
+    updateCropFrame();
+    
+    // Open modal
+    openModal('cropModal');
+  };
+  img.src = base64;
+}
+
+function updateCropFrame(){
+  const frame = document.getElementById('cropFrame');
+  if(frame){
+    frame.style.left = cropState.frameX + 'px';
+    frame.style.top = cropState.frameY + 'px';
+    frame.style.width = cropState.frameW + 'px';
+    frame.style.height = cropState.frameH + 'px';
+  }
+}
+
+function cropStartResize(e, handle){
+  e.preventDefault();
+  cropState.isDragging = true;
+  cropState.dragHandle = handle;
+  document.addEventListener('mousemove', cropResize);
+  document.addEventListener('mouseup', cropEndResize);
+  document.addEventListener('touchmove', cropResize);
+  document.addEventListener('touchend', cropEndResize);
+}
+
+function cropResize(e){
+  if(!cropState.isDragging) return;
+  
+  const Container = document.getElementById('cropContainer');
+  const rect = Container.getBoundingClientRect();
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  
+  const minW = 80;
+  const minH = 120;
+  const maxW = Container.offsetWidth - 20;
+  const maxH = Container.offsetHeight - 20;
+  
+  const h = cropState.dragHandle;
+  if(h.includes('t')){
+    const newH = cropState.frameH + (cropState.frameY - y);
+    if(newH > minH && y > 0){
+      cropState.frameY = y;
+      cropState.frameH = newH;
+    }
+  }
+  if(h.includes('b')){
+    const newH = y - cropState.frameY;
+    if(newH > minH && y < maxH){
+      cropState.frameH = newH;
+    }
+  }
+  if(h.includes('l')){
+    const newW = cropState.frameW + (cropState.frameX - x);
+    if(newW > minW && x > 0){
+      cropState.frameX = x;
+      cropState.frameW = newW;
+    }
+  }
+  if(h.includes('r')){
+    const newW = x - cropState.frameX;
+    if(newW > minW && x < maxW){
+      cropState.frameW = newW;
+    }
+  }
+  updateCropFrame();
+}
+
+function cropEndResize(){
+  cropState.isDragging = false;
+  document.removeEventListener('mousemove', cropResize);
+  document.removeEventListener('mouseup', cropEndResize);
+  document.removeEventListener('touchmove', cropResize);
+  document.removeEventListener('touchend', cropEndResize);
+}
+
+function applyCrop(){
+  const Container = document.getElementById('cropContainer');
+  const cropImageEl = document.getElementById('cropImage');
+  const canvas = document.createElement('canvas');
+  
+  // Get actual image dimensions
+  const img = new Image();
+  img.onload = ()=>{
+    const containerW = Container.offsetWidth;
+    const containerH = Container.offsetHeight;
+    const displayedW = cropImageEl.offsetWidth;
+    const displayedH = cropImageEl.offsetHeight;
+    
+    // Calculate scale ratios: how much of the original image is shown per container pixel
+    const scaleX = img.width / displayedW;
+    const scaleY = img.height / displayedH;
+    
+    // Calculate the source region in the original image coordinates
+    // Frame position relative to container
+    const frameX_rel = cropState.frameX;
+    const frameY_rel = cropState.frameY;
+    
+    // Image position in container
+    const imageX_in_container = cropImageEl.offsetLeft;
+    const imageY_in_container = cropImageEl.offsetTop;
+    
+    // Source coordinates in the original image
+    const srcX = (frameX_rel - imageX_in_container) * scaleX;
+    const srcY = (frameY_rel - imageY_in_container) * scaleY;
+    const srcW = cropState.frameW * scaleX;
+    const srcH = cropState.frameH * scaleY;
+    
+    // Set canvas to the crop frame size
+    canvas.width = cropState.frameW;
+    canvas.height = cropState.frameH;
+    
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(
+      img,
+      Math.max(0, srcX),
+      Math.max(0, srcY),
+      Math.min(srcW, img.width - srcX),
+      Math.min(srcH, img.height - srcY),
+      0,
+      0,
+      cropState.frameW,
+      cropState.frameH
+    );
+    
+    // Compress to JPEG 75% quality
+    const croppedBase64 = canvas.toDataURL('image/jpeg', 0.75);
+    
+    // Close modal
+    closeCropTool();
+    
+    // Update the original preview
+    if(cropState.isCover){
+      document.getElementById('coverPreviewImg').src = croppedBase64;
+      document.getElementById('coverScanStatus').textContent = '✂️ Cropped — processing with AI…';
+      document.getElementById('coverScanStatus').style.color = 'var(--gold)';
+      scanCoverViaAI(croppedBase64, document.getElementById('coverScanStatus'));
+    }
+  };
+  img.src = cropState.originalBase64;
+}
+
+function resetCrop(){
+  cropState.imageX = 0;
+  cropState.imageY = 0;
+  const cropImage = document.getElementById('cropImage');
+  if(cropImage){
+    cropImage.style.left = '0';
+    cropImage.style.top = '0';
+  }
+  initCropTool(cropState.originalBase64, cropState.isCover);
+}
+
+function toggleAdvancedCrop(){
+  // For now, handles are showing by default
+  toast('Drag the corner handles to adjust the crop area','info',2000);
+}
+
+async function tryBarcodeDetect(){
+  const Container = document.getElementById('cropContainer');
+  const cropImageEl = document.getElementById('cropImage');
+  const canvas = document.createElement('canvas');
+  
+  toast('📱 Scanning for barcode…','info',3000);
+  
+  try{
+    const img = new Image();
+    img.onload = async ()=>{
+      const containerW = Container.offsetWidth;
+      const containerH = Container.offsetHeight;
+      const displayedW = cropImageEl.offsetWidth;
+      const displayedH = cropImageEl.offsetHeight;
+      
+      // Get the cropped region
+      const scaleX = img.width / displayedW;
+      const scaleY = img.height / displayedH;
+      const frameX_rel = cropState.frameX;
+      const frameY_rel = cropState.frameY;
+      const imageX_in_container = cropImageEl.offsetLeft;
+      const imageY_in_container = cropImageEl.offsetTop;
+      const srcX = Math.max(0, (frameX_rel - imageX_in_container) * scaleX);
+      const srcY = Math.max(0, (frameY_rel - imageY_in_container) * scaleY);
+      const srcW = Math.min(cropState.frameW * scaleX, img.width - srcX);
+      const srcH = Math.min(cropState.frameH * scaleY, img.height - srcY);
+      
+      // Draw cropped region to canvas
+      canvas.width = srcW;
+      canvas.height = srcH;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
+      
+      // Enhance contrast for better barcode detection
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      const threshold = 128;
+      for(let i = 0; i < data.length; i += 4){
+        const gray = data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114;
+        const val = gray > threshold ? 255 : 0;
+        data[i] = data[i+1] = data[i+2] = val;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      
+      try{
+        // Try ZXing barcode detection
+        if(!window.ZXing) await loadScript('https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js');
+        const hints = new Map();
+        hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+        hints.set(ZXing.DecodeHintType.ASSUME_CODE_128, true);
+        const zxReader = new ZXing.BrowserMultiFormatReader(hints);
+        
+        const barcodeCanvas = document.createElement('canvas');
+        barcodeCanvas.width = canvas.width;
+        barcodeCanvas.height = canvas.height;
+        const bctx = barcodeCanvas.getContext('2d');
+        bctx.putImageData(imageData, 0, 0);
+        
+        const result = await zxReader.decodeFromImageElement(barcodeCanvas);
+        const barcode = result.getText();
+        
+        toast('✅ Barcode found: ' + barcode, 'success', 2000);
+        closeModal('cropModal');
+        await lookupBarcode(barcode);
+      }catch(err){
+        console.warn('ZXing failed:', err);
+        // Try AI to read barcode from the cropped area
+        toast('🤖 Using AI to read barcode…','info',3000);
+        const croppedBase64 = canvas.toDataURL('image/jpeg', 0.85);
+        await scanBarcodeViaAI(croppedBase64);
+      }
+    };
+    img.src = cropState.originalBase64;
+  }catch(e){
+    toast('⚠ Barcode detection failed', 'error', 2000);
+    console.error('Barcode detect error:', e);
+  }
+}
+
+async function scanBarcodeViaAI(base64DataUrl){
+  try{
+    const base64=base64DataUrl.split(',')[1];
+    const mtype=base64DataUrl.split(';')[0].split(':')[1];
+    
+    const res=await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST', headers:anthropicHeaders(),
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:200,
+        messages:[{role:'user',content:[
+          {type:'image',source:{type:'base64',media_type:mtype,data:base64}},
+          {type:'text',text:`Look for the barcode/UPC number in this image. It's usually a string of 10-13 digits (often below a barcode symbol). If you can see it, respond with ONLY the digits. If you cannot see a barcode number, respond with: NONE`}
+        ]}]})
+    });
+    
+    const data=await res.json();
+    const txt=data.content.map(b=>b.text||'').join('').trim();
+    
+    if(txt==='NONE'||!txt){
+      toast('⚠ No barcode found — use Cover Scan instead', 'warning', 3000);
+      closeModal('cropModal');
+      return;
+    }
+    
+    const barcode = txt.replace(/\D/g, '');
+    toast('📱 Found barcode: ' + barcode, 'success', 2000);
+    closeModal('cropModal');
+    await lookupBarcode(barcode);
+  }catch(e){
+    showFetchBlockedError(document.body, e, false);
+  }
+}
+
+function closeCropTool(){
+  closeModal('cropModal');
+  cropState = {
+    originalBase64: null,
+    originalCanvas: null,
+    isCover: false,
+    frameX: 0,
+    frameY: 0,
+    frameW: 0,
+    frameH: 0,
+    isDragging: false,
+    dragHandle: null,
+  };
 }
 
 // Reads ANY comic image — tries barcode first, falls back to cover reading
@@ -6669,32 +7171,39 @@ async function scanCoverViaAI(base64DataUrl, status){
       body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:900,
         messages:[{role:'user',content:[
           {type:'image',source:{type:'base64',media_type:mtype,data:base64}},
-          {type:'text',text:`This is a photo of one or more comic book covers. Read every piece of text and visual information visible.
+          {type:'text',text:`You are reading a comic book cover photo. Extract EVERY detail visible, with absolute priority on finding the ISSUE NUMBER.
 
-IMPORTANT: If you can see multiple comics in this photo, identify ALL of them and list them in the "multiple_comics" array. Focus on the most visible/prominent one for the main fields.
+CRITICAL PRIORITIES:
+1️⃣ ISSUE NUMBER - Look in the top right, top left, bottom, or center. Common formats: "#23", "No. 5", "Issue 1", "Vol 2 No 3". MUST be extracted accurately.
+2️⃣ TITLE - Full series name from the logo/text
+3️⃣ PUBLISHER - Marvel, DC, Image, Dark Horse, IDW, BOOM!, etc
 
-Extract all details and respond ONLY with JSON:
+SECONDARY:
+- Year/date
+- Variant edition info ("Variant Cover A", "2nd Print")
+- Creator names (Writer/Artist)
+- Barcode number (13 digits) if visible
+- Cover description
+
+If multiple comics are visible in ONE photo, list them. But if it's just one comic crossed over with another visible, focus on the MOST PROMINENT.
+
+Respond ONLY with valid JSON:
 {
-  "title": "Full series title of the MOST PROMINENT comic",
-  "issue": "Issue number of the most prominent comic",
-  "publisher": "Publisher name e.g. Image Comics, Dark Horse, IDW, BOOM!, Valiant, Marvel, DC",
-  "year": "Cover date or year if visible",
-  "variant": "Any variant info e.g. Variant Cover A, 2nd Print",
-  "creators": "Writer/artist credits if on cover",
-  "cover_description": "Brief description of cover art",
-  "keyNotes": "Any key issue info e.g. 1st Issue!, Special Edition",
-  "condition_notes": "Brief visible condition notes e.g. spine roll, corner wear",
+  "issue": "Issue number - MOST IMPORTANT. Examples: '23' or '1' or '5' or '?'",
+  "title": "Full series title",
+  "publisher": "Publisher",
+  "year": "Year/date if visible",
+  "variant": "Variant/edition info",
+  "creators": "Writer/artist if on cover",
+  "cover_description": "What's depicted",
+  "keyNotes": "Special edition notes",
+  "barcode": "UPC/barcode if readable",
   "confidence": "high / medium / low",
-  "confidence_reason": "Why you are or aren't confident",
-  "multiple_comics": [
-    {"title": "Fantastic Four", "issue": "23", "publisher": "Marvel"},
-    {"title": "Luke Cage", "issue": "1", "publisher": "Marvel"},
-    {"title": "Fantastic", "issue": "?", "publisher": "Marvel"}
-  ]
+  "confidence_reason": "Explanation",
+  "multiple_comics": []
 }
 
-Only include multiple_comics if you can clearly see MORE THAN ONE comic in the photo. If only one comic, omit that field or leave it empty.
-Be thorough — check every corner. If truly unreadable respond: null`}
+If you cannot read the issue number even as a guess, use "?". Empty arrays/objects are OK. Missing info is OK. Never respond with null — always return valid JSON.`}
         ]}]})
     });
     const data=await res.json();
