@@ -599,7 +599,7 @@ body {
 .crop-overlay{
   position:absolute;inset:0;
   background:linear-gradient(0deg,rgba(0,0,0,0.5),rgba(0,0,0,0.5));
-  pointer-events:none;display:flex;align-items:center;justify-content:center;
+  pointer-events:none;display:flex;align-items:center;justify-content:center;z-index:1;
 }
 .crop-frame{
   position:absolute;border:2px solid var(--gold);box-shadow:0 0 20px rgba(0,0,0,0.8);
@@ -6785,45 +6785,57 @@ function cropEndDrag(){
 function initCropTool(base64, isCover=false){
   cropState.originalBase64 = base64;
   cropState.isCover = isCover;
+  cropState.imageX = 0;
+  cropState.imageY = 0;
   
   const Container = document.getElementById('cropContainer');
   const cropImageEl = document.getElementById('cropImage');
-  const cropFrame = document.getElementById('cropFrame');
   
-  // Load image and auto-crop
-  const img = new Image();
-  img.onload = ()=>{
-    // Calculate aspect ratio for comic (2:3 - width:height)
-    const containerW = Container.offsetWidth;
-    const containerH = Container.offsetHeight; // This is 2:3 ratio from CSS
-    
-    // Calculate crop area with 85% of container (matches CSS)
-    const frameW = containerW * 0.85;
-    const frameH = containerH * 0.85;
-    
-    // Center the frame
-    const frameX = (containerW - frameW) / 2;
-    const frameY = (containerH - frameH) / 2;
-    
-    // Store state
-    cropState.frameX = frameX;
-    cropState.frameY = frameY;
-    cropState.frameW = frameW;
-    cropState.frameH = frameH;
-    cropState.originalCanvas = img;
-    
-    // Set image size to fit container
-    cropImageEl.src = base64;
-    cropImageEl.style.width = containerW + 'px';
-    cropImageEl.style.height = 'auto';
-    
-    // Update frame position
-    updateCropFrame();
-    
-    // Open modal
-    openModal('cropModal');
-  };
-  img.src = base64;
+  if(!Container || !cropImageEl){ toast('⚠ Crop interface failed', 'error', 2000); return; }
+  
+  // Show modal immediately so layout calculates
+  openModal('cropModal');
+  
+  // Wait a moment for modal layout, then load image
+  setTimeout(()=>{
+    const img = new Image();
+    img.onerror = ()=>{ toast('⚠ Image load failed', 'error', 2000); };
+    img.onload = ()=>{
+      requestAnimationFrame(()=>{
+        const containerW = Container.offsetWidth || Container.clientWidth;
+        const containerH = Container.offsetHeight || Container.clientHeight;
+        
+        if(!containerW || !containerH){ 
+          console.error('[ComicVault] Container has no dimensions'); 
+          return; 
+        }
+        
+        const frameW = containerW * 0.85;
+        const frameH = containerH * 0.85;
+        const frameX = (containerW - frameW) / 2;
+        const frameY = (containerH - frameH) / 2;
+        
+        cropState.frameX = frameX;
+        cropState.frameY = frameY;
+        cropState.frameW = frameW;
+        cropState.frameH = frameH;
+        cropState.imageX = 0;
+        cropState.imageY = 0;
+        
+        // Set image
+        cropImageEl.src = base64;
+        cropImageEl.style.width = containerW + 'px';
+        cropImageEl.style.height = 'auto';
+        cropImageEl.style.left = '0';
+        cropImageEl.style.top = '0';
+        cropImageEl.style.position = 'absolute';
+        
+        updateCropFrame();
+        toast('✂️ Crop to fit comic cover (2:3 ratio)', 'info', 2000);
+      });
+    };
+    img.src = base64;
+  }, 150);
 }
 
 function updateCropFrame(){
@@ -6904,17 +6916,25 @@ function applyCrop(){
   const cropImageEl = document.getElementById('cropImage');
   const canvas = document.createElement('canvas');
   
-  // Get actual image dimensions
+  if(!Container || !cropImageEl){ toast('⚠ Crop interface error. Try again.', 'error', 2000); return; }
+  
   const img = new Image();
+  img.onerror = ()=>{ toast('⚠ Image load failed. Try again.', 'error', 2000); };
   img.onload = ()=>{
-    const containerW = Container.offsetWidth;
-    const containerH = Container.offsetHeight;
-    const displayedW = cropImageEl.offsetWidth;
-    const displayedH = cropImageEl.offsetHeight;
-    
-    // Calculate scale ratios: how much of the original image is shown per container pixel
-    const scaleX = img.width / displayedW;
-    const scaleY = img.height / displayedH;
+    requestAnimationFrame(()=>{
+      const containerW = Container.offsetWidth || Container.clientWidth;
+      const containerH = Container.offsetHeight || Container.clientHeight;
+      const displayedW = cropImageEl.offsetWidth || cropImageEl.width || containerW;
+      const displayedH = cropImageEl.offsetHeight || cropImageEl.height || containerH;
+      
+      if(!containerW || !containerH || !displayedW || !displayedH){
+        console.error('[ComicVault] Crop dimensions invalid:', {containerW, containerH, displayedW, displayedH});
+        toast('⚠ Try taking photo again.', 'error', 2000);
+        return;
+      }
+      
+      const scaleX = img.width / displayedW;
+      const scaleY = img.height / displayedH;
     
     // Calculate the source region in the original image coordinates
     // Frame position relative to container
@@ -6931,36 +6951,31 @@ function applyCrop(){
     const srcW = cropState.frameW * scaleX;
     const srcH = cropState.frameH * scaleY;
     
-    // Set canvas to the crop frame size
-    canvas.width = cropState.frameW;
-    canvas.height = cropState.frameH;
-    
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(
-      img,
-      Math.max(0, srcX),
-      Math.max(0, srcY),
-      Math.min(srcW, img.width - srcX),
-      Math.min(srcH, img.height - srcY),
-      0,
-      0,
-      cropState.frameW,
-      cropState.frameH
-    );
-    
-    // Compress to JPEG 75% quality
-    const croppedBase64 = canvas.toDataURL('image/jpeg', 0.75);
-    
-    // Close modal
-    closeCropTool();
-    
-    // Update the original preview
-    if(cropState.isCover){
-      document.getElementById('coverPreviewImg').src = croppedBase64;
-      document.getElementById('coverScanStatus').textContent = '✂️ Cropped — processing with AI…';
-      document.getElementById('coverScanStatus').style.color = 'var(--gold)';
-      scanCoverViaAI(croppedBase64, document.getElementById('coverScanStatus'));
-    }
+      canvas.width = Math.max(100, Math.floor(cropState.frameW));
+      canvas.height = Math.max(150, Math.floor(cropState.frameH));
+      
+      const ctx = canvas.getContext('2d');
+      const srcX_safe = Math.max(0, Math.floor(srcX));
+      const srcY_safe = Math.max(0, Math.floor(srcY));
+      const srcW_safe = Math.min(Math.max(1, srcW), img.width - srcX_safe);
+      const srcH_safe = Math.min(Math.max(1, srcH), img.height - srcY_safe);
+      
+      ctx.drawImage(img, srcX_safe, srcY_safe, srcW_safe, srcH_safe, 0, 0, canvas.width, canvas.height);
+      
+      const croppedBase64 = canvas.toDataURL('image/jpeg', 0.75);
+      closeCropTool();
+      
+      if(cropState.isCover){
+        const previewImg = document.getElementById('coverPreviewImg');
+        const statusEl = document.getElementById('coverScanStatus');
+        if(previewImg && statusEl){
+          previewImg.src = croppedBase64;
+          statusEl.textContent = '✂️ Cropped — processing with AI…';
+          statusEl.style.color = 'var(--gold)';
+          scanCoverViaAI(croppedBase64, statusEl);
+        }
+      }
+    });
   };
   img.src = cropState.originalBase64;
 }
