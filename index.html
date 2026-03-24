@@ -3433,305 +3433,151 @@ async function lookupBarcodeForCover(id, barcode, status){
 }
 
 function openCoverCropper(id, input){
-  const file=input.files[0]; if(!file) return;
-  const reader=new FileReader();
-  reader.onload=async e=>{
-    const src=e.target.result;
+  const file = input.files[0]; if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async e => {
+    const base64 = e.target.result;
     document.getElementById('fixCoverModal')?.remove();
-    // Run the full smart capture pipeline — no manual cropping needed
-    await smartCoverCapture(id, src, file.type);
+    await smartCoverCapture(id, base64, file.type);
   };
   reader.readAsDataURL(file);
 }
 
-// ── SMART COVER CAPTURE PIPELINE ────────────────────────────
-// Photo → AI crops + identifies → finds official cover → pick one
 async function smartCoverCapture(id, base64, mimeType){
-  const comic=DB.comics.find(x=>x.id===id);
+  const comic = DB.comics.find(x=>x.id===id);
 
-  // Show progress overlay
-  const overlay=document.createElement('div');
-  overlay.id='smartCaptureOverlay';
-  overlay.style.cssText='position:fixed;inset:0;background:#000;z-index:10001;display:flex;flex-direction:column';
-  overlay.innerHTML=`
-    <div style="flex:1;position:relative;overflow:hidden">
-      <img src="${base64}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:.25">
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:2rem">
-        <div style="width:52px;height:52px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div>
-        <div id="scc-step" style="color:#ffd60a;font-family:'Barlow Condensed';font-weight:700;font-size:1.1rem;text-align:center;letter-spacing:.5px">📷 Reading photo…</div>
-        <div id="scc-sub" style="color:#777;font-size:.78rem;text-align:center;max-width:240px">AI finding comic edges</div>
-      </div>
-    </div>
-    <div style="background:#111;padding:.6rem;flex-shrink:0">
-      <button id="sccCancelBtn" style="width:100%;background:transparent;border:1px solid #333;color:#666;padding:.6rem;border-radius:4px;font-size:.82rem;cursor:pointer">✕ Cancel</button>
-    </div>`;
+  // Show simple progress
+  const overlay = document.createElement('div');
+  overlay.id = 'smartCaptureOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:10001;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem';
+  overlay.innerHTML = `
+    <div style="width:48px;height:48px;border:3px solid #333;border-top-color:#ffd60a;border-radius:50%;animation:spin .8s linear infinite"></div>
+    <div id="scc-step" style="color:#ffd60a;font-family:'Barlow Condensed';font-weight:700;font-size:1rem;text-align:center">📷 Saving cover…</div>`;
   document.body.appendChild(overlay);
-  document.getElementById('sccCancelBtn').addEventListener('click',()=>{ overlay.remove(); fixCover(id); });
 
-  const setStep=(s,sub)=>{
-    const e=document.getElementById('scc-step');
-    const e2=document.getElementById('scc-sub');
-    if(e) e.textContent=s;
-    if(e2) e2.textContent=sub||'';
-  };
-
-  const showError=(msg,sub)=>{
-    overlay.remove();
-    const errModal=document.createElement('div');
-    errModal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10001;display:flex;align-items:center;justify-content:center;padding:1.5rem';
-    errModal.innerHTML=`
-      <div style="background:var(--ink2);border:1px solid rgba(230,57,70,.4);border-radius:8px;padding:1.2rem;width:100%;max-width:380px">
-        <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--accent2);margin-bottom:.5rem">⚠ ${msg}</div>
-        <div style="font-size:.78rem;color:var(--dim);margin-bottom:1rem;line-height:1.6">${sub||''}</div>
-        <div style="display:flex;flex-direction:column;gap:.5rem">
-          <button id="errManual" class="btn btn-primary">✂️ Open Manual Cropper</button>
-          <button id="errSaveAny" class="btn btn-ghost">💾 Save Photo As-Is</button>
-          <button id="errCancel" class="btn btn-ghost" style="color:var(--dim)">✕ Cancel</button>
-        </div>
-      </div>`;
-    document.body.appendChild(errModal);
-    document.getElementById('errManual').addEventListener('click',()=>{ errModal.remove(); showCropperModal(id,base64,{x1:5,y1:5,x2:95,y2:95}); });
-    document.getElementById('errSaveAny').addEventListener('click',()=>{ errModal.remove(); uploadCoverFromBase64(id,base64); });
-    document.getElementById('errCancel').addEventListener('click',()=>{ errModal.remove(); fixCover(id); });
-  };
+  const setStep = s => { const e=document.getElementById('scc-step'); if(e) e.textContent=s; };
 
   try{
-    if(!apiKeys.anthropic){
-      showError('API key needed','Add your Anthropic API key in Settings → API Keys.');
-      return;
+    // Step 1: Center-crop to 2:3 ratio (standard comic size) — always works
+    setStep('✂️ Cropping to comic ratio…');
+    const cropped = await centerCropTo2x3(base64);
+
+    // Step 2: Read title/publisher via AI (optional — doesn't block save)
+    let title = comic?.title||'', issue = comic?.issue||'', publisher = comic?.publisher||'';
+    if(apiKeys.anthropic){
+      setStep('🤖 Reading cover text…');
+      try{
+        const res = await fetch('https://api.anthropic.com/v1/messages',{
+          method:'POST', headers:anthropicHeaders(),
+          body:JSON.stringify({
+            model:'claude-haiku-4-5-20251001', max_tokens:100,
+            messages:[{role:'user',content:[
+              {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
+              {type:'text',text:'Read the comic title, issue number, and publisher. Return ONLY JSON: {"title":"","issue":"","publisher":""}'}
+            ]}]
+          })
+        });
+        if(res.ok){
+          const data = await res.json();
+          const txt = (data.content||[]).map(b=>b.text||'').join('').trim();
+          const m = txt.match(/\{[^}]+\}/);
+          if(m){
+            const p = JSON.parse(m[0]);
+            const clean = v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown/i.test(v)?v.trim():'';
+            if(clean(p.title)) title = p.title;
+            if(clean(p.issue)) issue = p.issue.replace(/\D/g,'');
+            if(clean(p.publisher)) publisher = p.publisher;
+          }
+        }
+      }catch(e){ /* AI read failed — keep existing metadata, still save */ }
     }
 
-    // Step 1: Use canvas to auto-trim dark/light borders (no AI needed for this)
-    setStep('✂️ Trimming borders…','Removing solid-color edges');
-    const canvasTrimmed = await canvasTrimBorders(base64);
-
-    // Step 2: AI reads title/publisher from the trimmed image
-    setStep('🤖 Reading cover text…','~5 seconds');
-    const res=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',headers:anthropicHeaders(),
-      body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',max_tokens:150,
-        messages:[{role:'user',content:[
-          {type:'image',source:{type:'base64',media_type:mimeType||'image/jpeg',data:base64.split(',')[1]}},
-          {type:'text',text:`Read the text on this comic book cover. Return ONLY this JSON:
-{"title":"series name","issue":"number","publisher":"publisher name","variant":""}
-Use "" for anything you cannot read clearly.`}
-        ]}]
-      })
-    });
-
-    if(!res.ok) throw new Error(`API ${res.status}`);
-    const data=await res.json();
-    if(data.error) throw new Error(data.error.message);
-
-    const txt=(data.content||[]).map(b=>b.type==='text'?b.text:'').join('').trim();
-    const matches=[...txt.matchAll(/\{[^{}]*\}/g)];
-    let ai={title:'',issue:'',publisher:'',variant:''};
-    for(const m of matches.reverse()){
-      try{ const p=JSON.parse(m[0]); if(p.title!==undefined){ai=p;break;} }catch(e){}
-    }
-
-    const clean=v=>v&&typeof v==='string'&&v.length<80&&!/cannot|unclear|unknown|sorry|visible/i.test(v)?v.trim():'';
-    const title=clean(ai.title)||comic?.title||'';
-    const issue=clean(ai.issue)||comic?.issue||'';
-    const publisher=clean(ai.publisher)||comic?.publisher||'';
-    const variant=clean(ai.variant)||'';
-
-    // Update comic metadata
-    const idx=DB.comics.findIndex(x=>x.id===id);
+    // Step 3: Update metadata
+    const idx = DB.comics.findIndex(x=>x.id===id);
     if(idx!==-1){
-      if(title) DB.comics[idx].title=title;
-      if(issue&&/^\d/.test(issue)) DB.comics[idx].issue=issue.replace(/\D/g,'');
-      if(publisher) DB.comics[idx].publisher=publisher;
-      if(variant) DB.comics[idx].variant=variant;
+      if(title) DB.comics[idx].title = title;
+      if(issue) DB.comics[idx].issue = issue;
+      if(publisher) DB.comics[idx].publisher = publisher;
+      DB.comics[idx].image = cropped;
+      DB.comics[idx].coverAttempted = true;
     }
 
-    setStep('✅ Saving cover…','');
+    // Step 4: Save
+    setStep('✅ Saving…');
+    saveDB();
 
-    // Save the canvas-trimmed version
-    const cidx=DB.comics.findIndex(x=>x.id===id);
-    if(cidx!==-1){
-      DB.comics[cidx].image=canvasTrimmed;
-      DB.comics[cidx].coverAttempted=true;
-      saveDB();
-    }
-
-    if(gdriveToken&&canvasTrimmed.startsWith('data:')){
-      gdriveUploadPhoto(id,title,issue,canvasTrimmed).then(result=>{
+    // Step 5: Upload to Drive in background
+    if(gdriveToken && cropped.startsWith('data:')){
+      gdriveUploadPhoto(id, title, issue, cropped).then(result=>{
         if(result){
-          const i2=DB.comics.findIndex(x=>x.id===id);
-          if(i2!==-1){ DB.comics[i2].drivePhotoUrl=result.url; DB.comics[i2].driveFileId=result.fileId; DB.comics[i2].image=''; saveDB(); }
+          const i2 = DB.comics.findIndex(x=>x.id===id);
+          if(i2!==-1){
+            DB.comics[i2].drivePhotoUrl = result.url;
+            DB.comics[i2].driveFileId = result.fileId;
+            DB.comics[i2].image = '';
+            saveDB();
+          }
         }
       }).catch(()=>{});
     }
 
     overlay.remove();
     renderCollection();
-    showCoverSavedToast(id, canvasTrimmed, title, issue);
+    showCoverSavedToast(id, cropped, title, issue);
 
   }catch(err){
-    console.error('[SmartCapture]',err.message);
-    const msg=err.message||'Unknown error';
-    if(msg.includes('API')||msg.includes('401')||msg.includes('403')){
-      showError('API Error',msg+' — check your Anthropic key in Settings.');
-    } else if(msg.includes('fetch')||msg.includes('Failed to fetch')){
-      showError('Network Error','Could not reach the AI. Check your connection.');
-    } else {
-      showError('Something went wrong',msg);
-    }
+    overlay.remove();
+    console.error('[SmartCapture]', err);
+    // Last resort fallback — save original photo uncropped
+    const idx = DB.comics.findIndex(x=>x.id===id);
+    if(idx!==-1){ DB.comics[idx].image = base64; saveDB(); }
+    renderCollection();
+    toast('✅ Photo saved as cover');
   }
 }
 
-// Smart canvas border trimmer — removes solid-color edges (dark background, white table)
-// Works entirely in the browser with no API calls
-function canvasTrimBorders(base64){
+// Crop image to standard 2:3 comic ratio from center
+// Simple, reliable, always works regardless of photo content
+function centerCropTo2x3(base64){
   return new Promise(resolve=>{
-    const img=new Image();
-    img.onload=()=>{
-      const W=img.width, H=img.height;
-      // Draw to canvas to read pixels
-      const tmp=document.createElement('canvas');
-      tmp.width=W; tmp.height=H;
-      const ctx=tmp.getContext('2d');
-      ctx.drawImage(img,0,0);
+    const img = new Image();
+    img.onload = () => {
+      const W = img.naturalWidth || img.width;
+      const H = img.naturalHeight || img.height;
 
-      // Sample pixels along each edge to find where background ends
-      const TOLERANCE=35; // color difference to consider "different from edge"
-      const SAMPLE_STEP=4; // check every 4th pixel for speed
+      // Target 2:3 ratio (standard comic cover)
+      const targetRatio = 2/3;
+      const srcRatio = W/H;
 
-      // Get the background color from the corner (top-left 3x3 average)
-      let rSum=0,gSum=0,bSum=0,count=0;
-      for(let sx=0;sx<Math.min(8,W);sx+=2){
-        for(let sy=0;sy<Math.min(8,H);sy+=2){
-          const d=ctx.getImageData(sx,sy,1,1).data;
-          rSum+=d[0];gSum+=d[1];bSum+=d[2];count++;
-        }
-      }
-      const bgR=rSum/count, bgG=gSum/count, bgB=bSum/count;
-
-      const isDifferent=(r,g,b)=>Math.abs(r-bgR)+Math.abs(g-bgG)+Math.abs(b-bgB)>TOLERANCE*3;
-
-      // Find top edge
-      let top=0;
-      outer: for(let y=0;y<H;y+=SAMPLE_STEP){
-        for(let x=Math.floor(W*0.1);x<W*0.9;x+=SAMPLE_STEP){
-          const d=ctx.getImageData(x,y,1,1).data;
-          if(isDifferent(d[0],d[1],d[2])){ top=Math.max(0,y-SAMPLE_STEP); break outer; }
-        }
-      }
-      // Find bottom edge
-      let bottom=H;
-      outer2: for(let y=H-1;y>=0;y-=SAMPLE_STEP){
-        for(let x=Math.floor(W*0.1);x<W*0.9;x+=SAMPLE_STEP){
-          const d=ctx.getImageData(x,y,1,1).data;
-          if(isDifferent(d[0],d[1],d[2])){ bottom=Math.min(H,y+SAMPLE_STEP); break outer2; }
-        }
-      }
-      // Find left edge
-      let left=0;
-      outer3: for(let x=0;x<W;x+=SAMPLE_STEP){
-        for(let y=Math.floor(H*0.1);y<H*0.9;y+=SAMPLE_STEP){
-          const d=ctx.getImageData(x,y,1,1).data;
-          if(isDifferent(d[0],d[1],d[2])){ left=Math.max(0,x-SAMPLE_STEP); break outer3; }
-        }
-      }
-      // Find right edge
-      let right=W;
-      outer4: for(let x=W-1;x>=0;x-=SAMPLE_STEP){
-        for(let y=Math.floor(H*0.1);y<H*0.9;y+=SAMPLE_STEP){
-          const d=ctx.getImageData(x,y,1,1).data;
-          if(isDifferent(d[0],d[1],d[2])){ right=Math.min(W,x+SAMPLE_STEP); break outer4; }
-        }
+      let sx, sy, sw, sh;
+      if(srcRatio > targetRatio){
+        // Photo is wider than 2:3 — crop sides
+        sh = H;
+        sw = Math.round(H * targetRatio);
+        sx = Math.round((W - sw) / 2);
+        sy = 0;
+      } else {
+        // Photo is taller than 2:3 — crop top/bottom
+        sw = W;
+        sh = Math.round(W / targetRatio);
+        sx = 0;
+        sy = Math.round((H - sh) / 2);
       }
 
-      const sw=right-left;
-      const sh=bottom-top;
-      const trimPct=1-(sw*sh)/(W*H);
-
-      console.log('[CanvasTrim] bg='+Math.round(bgR)+','+Math.round(bgG)+','+Math.round(bgB)+
-        ' crop='+left+','+top+' → '+right+','+bottom+' trimmed='+Math.round(trimPct*100)+'%');
-
-      // Only use trim if it actually removed something meaningful (>3%) but not too aggressive (>60%)
-      if(trimPct<0.03||trimPct>0.6||sw<50||sh<50){
-        // Trim didn't work well — return original
-        console.log('[CanvasTrim] Skipping trim, using original');
-        resolve(base64);
-        return;
-      }
-
-      // Draw cropped result at comic 2:3 ratio
-      const out=document.createElement('canvas');
-      out.width=400; out.height=600;
-      const outCtx=out.getContext('2d');
-      outCtx.fillStyle='#000';
-      outCtx.fillRect(0,0,400,600);
-      outCtx.drawImage(img,left,top,sw,sh,0,0,400,600);
-      resolve(out.toDataURL('image/jpeg',0.93));
+      const canvas = document.createElement('canvas');
+      canvas.width = 400;
+      canvas.height = 600;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, 400, 600);
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 400, 600);
+      resolve(canvas.toDataURL('image/jpeg', 0.92));
     };
-    img.onerror=()=>resolve(base64);
-    img.src=base64;
+    img.onerror = () => resolve(base64);
+    img.src = base64;
   });
 }
 
-function showCoverSavedToast(id, cropped, title, issue){
-  // Remove any existing
-  document.getElementById('coverSavedToast')?.remove();
-
-  const t=document.createElement('div');
-  t.id='coverSavedToast';
-  t.style.cssText=`position:fixed;bottom:calc(var(--bottom-nav-h)+10px);left:10px;right:10px;
-    background:var(--ink2);border:1px solid rgba(74,222,128,.4);border-radius:8px;
-    padding:.7rem .9rem;z-index:900;display:flex;align-items:center;gap:.7rem;
-    box-shadow:0 4px 20px rgba(0,0,0,.6)`;
-  t.innerHTML=`
-    <img src="${cropped}" style="width:36px;height:54px;object-fit:cover;border-radius:3px;flex-shrink:0;border:1px solid var(--border)">
-    <div style="flex:1;min-width:0">
-      <div style="font-size:.8rem;font-weight:700;color:var(--green)">✅ Cover saved</div>
-      <div style="font-size:.7rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${title||''}${issue?' #'+issue:''}</div>
-    </div>
-    <div style="display:flex;flex-direction:column;gap:.3rem;flex-shrink:0">
-      <button id="cstAdjust" class="btn btn-ghost btn-sm" style="font-size:.68rem;padding:.25rem .5rem">✂️ Adjust</button>
-      <button id="cstUndo" class="btn btn-ghost btn-sm" style="font-size:.68rem;padding:.25rem .5rem;color:var(--accent2)">↩ Undo</button>
-    </div>`;
-  document.body.appendChild(t);
-
-  // Wire buttons
-  document.getElementById('cstAdjust').addEventListener('click',()=>{
-    t.remove();
-    showCropperModal(id, cropped, {x1:5,y1:5,x2:95,y2:95});
-  });
-  document.getElementById('cstUndo').addEventListener('click',()=>{
-    t.remove();
-    const idx=DB.comics.findIndex(x=>x.id===id);
-    if(idx!==-1){ DB.comics[idx].image=''; DB.comics[idx].coverUrl=''; DB.comics[idx].drivePhotoUrl=''; saveDB(); renderCollection(); }
-    toast('Cover removed','info');
-  });
-
-  // Auto-dismiss after 8 seconds
-  setTimeout(()=>t.remove(), 8000);
-}
-
-function autoCropImage(base64,crop){
-  return new Promise(resolve=>{
-    const img=new Image();
-    img.onload=()=>{
-      const sx=Math.max(0,img.width*(crop.x1/100));
-      const sy=Math.max(0,img.height*(crop.y1/100));
-      const sw=Math.min(img.width*((crop.x2-crop.x1)/100),img.width-sx);
-      const sh=Math.min(img.height*((crop.y2-crop.y1)/100),img.height-sy);
-      if(sw<20||sh<20){ resolve(base64); return; }
-      const c=document.createElement('canvas');
-      c.width=400; c.height=600;
-      const ctx=c.getContext('2d');
-      ctx.fillStyle='#000';
-      ctx.fillRect(0,0,400,600);
-      ctx.drawImage(img,sx,sy,sw,sh,0,0,400,600);
-      resolve(c.toDataURL('image/jpeg',0.93));
-    };
-    img.onerror=()=>resolve(base64);
-    img.src=base64;
-  });
-}
 
 function showSmartCaptureResults(id,croppedPhoto,officialCovers,title,issue){
   const modal=document.createElement('div');
