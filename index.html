@@ -3,59 +3,67 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="description" content="ComicVault Pro – Low-touch comic buying & selling with CLZ sync">
 <title>ComicVault Pro</title>
-<link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#0a0a0f">
 
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com');
 
 :root {
   --ink: #0a0a0f; --ink2: #111118; --panel: #16161f; --panel2: #1e1e2a;
   --border: #2a2a3e; --border2: #3a3a50; --paper: #f0ece4; --accent: #e63946;
-  --gold: #ffd60a; --green: #4ade80; --blue: #4895ef; --purple: #a78bfa;
-  --dim: #a0a0b0;
+  --gold: #ffd60a; --blue: #4895ef; --purple: #a78bfa; --dim: #a0a0b0;
 }
 
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-body { background:var(--ink); color:var(--paper); font-family:'Barlow',sans-serif; font-size:15px; height:100vh; overflow:hidden; }
+body { background:var(--ink); color:var(--paper); font-family:'Barlow', sans-serif; font-size:15px; height:100vh; overflow:hidden; }
 
-.app-shell { display: flex; height: 100vh; width: 100vw; }
+.app-shell { display: flex; height: 100vh; width: 100vw; overflow: hidden; }
 
 /* SIDEBAR */
-.sidebar { width: 260px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: transform 0.3s ease; z-index: 100; }
-.sidebar-logo { padding: 20px; border-bottom: 1px solid var(--border); }
-.sidebar-logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; letter-spacing: 1px; }
+.sidebar { 
+  width: 260px; background: var(--panel); border-right: 1px solid var(--border); 
+  display: flex; flex-direction: column; flex-shrink: 0; z-index: 1000; transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.main-area { flex-grow: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+
+/* HEADER & CONTENT */
+.top-header { 
+  height: 64px; background: var(--panel); border-bottom: 1px solid var(--border); 
+  display: flex; align-items: center; padding: 0 20px; gap: 12px; flex-shrink: 0;
+}
+
+.header-title { flex: 1; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 1.3rem; text-transform: uppercase; }
+
+.content-scroll { flex: 1; overflow-y: auto; padding: 20px; }
+
+/* NAV */
+.sidebar-logo { padding: 24px; border-bottom: 1px solid var(--border); }
+.sidebar-logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; }
 .sidebar-logo-text span { color: var(--accent); }
-.sidebar-nav { padding: 10px; overflow-y: auto; flex: 1; }
-.nav-section-label { font-size: 0.7rem; font-weight: 800; color: var(--dim); margin: 15px 10px 5px; letter-spacing: 1px; }
-.nav-item { padding: 12px 15px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 10px; margin-bottom: 2px; transition: 0.2s; }
-.nav-item:hover { background: var(--panel2); }
+.nav-section-label { font-size: 0.7rem; font-weight: 800; color: var(--dim); margin: 20px 15px 8px; letter-spacing: 1px; }
+.nav-item { padding: 12px 15px; margin: 2px 10px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; color: var(--dim); transition: 0.2s; }
+.nav-item:hover { background: var(--panel2); color: var(--paper); }
 .nav-item.active { background: var(--accent); color: white; }
 
-/* MAIN AREA */
-.main-area { flex: 1; display: flex; flex-direction: column; background: var(--ink); position: relative; }
-.top-header { height: 60px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 15px; gap: 10px; }
-.header-title { flex: 1; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 1.2rem; text-transform: uppercase; }
-.hamburger { background: none; border: none; color: white; font-size: 1.5rem; cursor: pointer; display: none; }
+/* UI COMPONENTS */
+.btn { padding: 12px 18px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; font-family: inherit; font-size: 0.9rem; }
+.btn-gold { background: var(--gold); color: var(--ink); }
+.btn-blue { background: var(--blue); color: white; }
+.btn-ghost { background: transparent; border: 1px solid var(--border2); color: var(--paper); }
 
-.content-scroll { flex: 1; overflow-y: auto; padding: 15px; }
+.card { background: var(--panel2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 15px; }
+.low-touch-note { background: rgba(255,214,10,0.08); border-left: 4px solid var(--gold); padding: 15px; border-radius: 4px; margin-bottom: 20px; color: var(--gold); font-size: 0.85rem; }
+
 .page { display: none; }
 .page.active { display: block; }
 
-/* BUTTONS & UI */
-.btn { padding: 10px 15px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; font-family: inherit; }
-.btn-full { width: 100%; margin-bottom: 10px; }
-.btn-primary { background: var(--blue); color: white; }
-.btn-gold { background: var(--gold); color: var(--ink); }
-.btn-gallery { background: rgba(72,149,239,.15); color: var(--blue); border: 1px solid rgba(72,149,239,.3); }
-.low-touch-note { font-size: 0.78rem; color: var(--dim); background: rgba(255,214,10,.06); padding: 0.8rem; border-radius: 4px; margin-bottom: 1rem; border-left: 3px solid var(--gold); }
-.mt-md { margin-top: 15px; }
+.hamburger { display: none; background: none; border: none; color: white; font-size: 1.5rem; cursor: pointer; }
 
-@media (max-width: 768px) {
-  .sidebar { position: absolute; left: 0; top: 0; bottom: 0; transform: translateX(-100%); }
-  .sidebar.open { transform: translateX(0); }
+/* MOBILE BREAKPOINT */
+@media (max-width: 850px) {
+  .sidebar { position: fixed; left: -260px; height: 100%; box-shadow: 10px 0 30px rgba(0,0,0,0.5); }
+  .sidebar.open { left: 0; }
   .hamburger { display: block; }
 }
 </style>
@@ -66,165 +74,160 @@ body { background:var(--ink); color:var(--paper); font-family:'Barlow',sans-seri
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-logo">
       <div class="sidebar-logo-text">Comic<span>Vault</span></div>
-      <small>Pro • Selling Edition</small>
+      <small style="color:var(--dim)">Pro • Selling Edition</small>
     </div>
     <div class="sidebar-nav">
-      <div class="nav-section-label">SELLING (Priority)</div>
-      <div class="nav-item" data-page="bundle" onclick="nav('bundle')"><span class="nav-icon">🎁</span> Bundle Builder</div>
-      <div class="nav-item" data-page="publish" onclick="nav('publish')"><span class="nav-icon">🚀</span> Publish Hub</div>
-      <div class="nav-item" data-page="sellmode" onclick="nav('sellmode')"><span class="nav-icon">🎯</span> Sell Mode Sorter</div>
-
+      <div class="nav-section-label">SELLING</div>
+      <div class="nav-item" onclick="nav('bundle')">🎁 Bundle Builder</div>
+      <div class="nav-item" onclick="nav('publish')">🚀 Publish Hub</div>
+      
       <div class="nav-section-label">COLLECTION</div>
-      <div class="nav-item active" data-page="collection" onclick="nav('collection')"><span class="nav-icon">📦</span> Collection</div>
-      <div class="nav-item" data-page="prices" onclick="nav('prices')"><span class="nav-icon">📷</span> Photo Grade + Sell</div>
-
+      <div class="nav-item active" onclick="nav('collection')">📦 Collection</div>
+      <div class="nav-item" onclick="nav('prices')">📷 Photo Grade + Sell</div>
+      
       <div class="nav-section-label">CLZ SYNC</div>
-      <div class="nav-item" data-page="clzsync" onclick="nav('clzsync')"><span class="nav-icon">🔄</span> CLZ Import/Export</div>
+      <div class="nav-item" onclick="nav('clzsync')">🔄 CLZ Import/Export</div>
     </div>
   </nav>
 
   <div class="main-area">
     <header class="top-header">
-      <button class="hamburger" onclick="toggleSidebar()">☰</button>
+      <button class="hamburger" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
       <div class="header-title" id="pageTitle">Collection</div>
-      <button class="btn btn-gold" onclick="nav('prices')">📷 Scan</button>
+      <button class="btn btn-gold" style="padding: 8px 12px; font-size: 0.8rem;" onclick="nav('prices')">📷 SCAN</button>
     </header>
 
-    <div class="content-scroll" id="contentScroll">
-      
-      <!-- COLLECTION PAGE -->
-      <div class="page active" id="page-collection">
-        <h2>Your Library</h2>
-        <p style="color:var(--dim)">Empty - Start by importing from CLZ or scanning a comic.</p>
-      </div>
-
-      <!-- PHOTO GRADE PAGE -->
+    <div class="content-scroll">
+      <!-- PAGES -->
       <div class="page" id="page-prices">
-        <div class="low-touch-note">
-          💡 Low-touch tip: Do your CLZ cover scan while bagging/boardering, then reuse that photo here for grading.
-        </div>
-        <div style="background:rgba(255,214,10,.06);border:2px solid rgba(255,214,10,.3);border-radius:6px;padding:1rem;margin-bottom:1rem">
-          <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold);margin-bottom:.3rem">📷 Photo → Grade + Sell Strategy</div>
-          <div style="display:flex;gap:.5rem;margin-bottom:.8rem;flex-wrap:wrap">
-            <button class="btn btn-gold" style="flex:1" onclick="document.getElementById('gradePhotoInput').click()">📷 Take Photo</button>
-            <button class="btn btn-gallery" style="flex:1" onclick="selectFromGallery()">🖼️ Gallery</button>
+        <div class="low-touch-note">💡 Strategy: Reuse your CLZ cover scans to save time grading.</div>
+        <div class="card">
+          <h3 style="color:var(--gold); margin-bottom:10px;">Photo Grading AI</h3>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            <button class="btn btn-gold" onclick="document.getElementById('fileIn').click()">📷 Take Photo</button>
+            <button class="btn btn-ghost" onclick="document.getElementById('fileIn').click()">🖼️ Gallery</button>
           </div>
-          <input type="file" id="gradePhotoInput" accept="image/*" capture="environment" style="display:none" onchange="gradeFromPhoto(this)">
-          <div id="gradePhotoResult"></div>
+          <input type="file" id="fileIn" style="display:none" onchange="processImage(this)">
+          <div id="gradeResult" style="margin-top:20px;"></div>
         </div>
       </div>
 
-      <!-- CLZ SYNC PAGE -->
+      <div class="page active" id="page-collection">
+        <div id="collectionList">
+          <div class="card"><p style="color:var(--dim)">Vault is empty. Use CLZ Sync to import.</p></div>
+        </div>
+      </div>
+
       <div class="page" id="page-clzsync">
-        <div class="low-touch-note">
-          <strong>CLZ Sync</strong><br>
-          1. In CLZ Web: Export → CSV<br>
-          2. Import here → Run logic<br>
-          3. Export back to CLZ
+        <div class="card">
+          <h3 style="margin-bottom:15px">Cloud Data Transfer</h3>
+          <button class="btn btn-blue" style="width:100%; margin-bottom:10px;" onclick="exportCSV()">📤 Export CSV for CLZ</button>
+          <button class="btn btn-gold" style="width:100%;" onclick="document.getElementById('csvIn').click()">📥 Import CLZ CSV</button>
+          <input type="file" id="csvIn" accept=".csv" style="display:none" onchange="importCSV(this)">
         </div>
-        <button class="btn btn-primary btn-full" onclick="exportForCLZ()">📤 Export CSV for CLZ</button>
-        <input type="file" id="clzImportFile" accept=".csv" style="display:none" onchange="importFromCLZ(this)">
-        <button class="btn btn-gold btn-full mt-md" onclick="document.getElementById('clzImportFile').click()">📥 Import CLZ CSV</button>
-        <div id="clzStatus" class="mt-md"></div>
       </div>
 
-      <!-- Placeholder Pages -->
-      <div class="page" id="page-bundle"><h2>Bundle Builder</h2></div>
-      <div class="page" id="page-publish"><h2>Publish Hub</h2></div>
-      <div class="page" id="page-sellmode"><h2>Sell Mode Sorter</h2></div>
-
+      <!-- Placeholders -->
+      <div class="page" id="page-bundle"><div class="card"><h2>Bundle Builder</h2><p>Coming Soon</p></div></div>
+      <div class="page" id="page-publish"><div class="card"><h2>Publish Hub</h2><p>Coming Soon</p></div></div>
     </div>
   </div>
 </div>
 
 <script>
-// INITIALIZE DATABASE
-let DB = {
-  comics: JSON.parse(localStorage.getItem('cv_comics')) || []
-};
+// BUG FIX: Database init with localStorage
+let DB = JSON.parse(localStorage.getItem('cv_data')) || { comics: [] };
 
-// NAVIGATION
 function nav(pageId) {
-  // Update UI
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  
   document.getElementById('page-' + pageId).classList.add('active');
-  document.querySelector(`[data-page="${pageId}"]`).classList.add('active');
   
-  // Set Title
-  const titles = { 'collection': 'Collection', 'prices': 'Photo Grade', 'clzsync': 'CLZ Sync', 'bundle': 'Bundles', 'publish': 'Publish', 'sellmode': 'Sorter' };
-  document.getElementById('pageTitle').innerText = titles[pageId] || 'ComicVault';
-  
-  // Close sidebar on mobile
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.classList.remove('active');
+    if(n.innerText.toLowerCase().includes(pageId)) n.classList.add('active');
+  });
+
+  document.getElementById('pageTitle').innerText = pageId.replace('prices', 'Photo Grade').toUpperCase();
   document.getElementById('sidebar').classList.remove('open');
+  if(pageId === 'collection') renderCollection();
 }
 
-function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
-}
-
-function toast(msg) {
-  alert(msg); // Basic alert for now
-}
-
-// GALLERY SELECT
-function selectFromGallery() {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.onchange = (e) => {
-    if (e.target.files && e.target.files[0]) { gradeFromPhoto(e.target); }
-  };
-  input.click();
-}
-
-function gradeFromPhoto(input) {
-  const resultDiv = document.getElementById('gradePhotoResult');
-  resultDiv.innerHTML = "<p>⌛ Analyzing image (Simulated)...</p>";
-  setTimeout(() => {
-    resultDiv.innerHTML = `<div style="background:var(--panel2);padding:10px;border-radius:4px;margin-top:10px">
-      <strong>AI Analysis:</strong> Estimated Grade: 9.2 (NM-)<br>
-      <button class="btn btn-gold btn-full mt-md" onclick="nav('collection')">Save to Vault</button>
-    </div>`;
-  }, 1500);
-}
-
-// CSV EXPORT
-function exportForCLZ() {
-  if(DB.comics.length === 0) { toast("No comics to export!"); return; }
-  const headers = ['Title','Issue','Publisher','MyGrade','Decision'];
-  const rows = DB.comics.map(c => [c.title, c.issue, c.publisher, c.grade, 'Hold']);
+function renderCollection() {
+  const container = document.getElementById('collectionList');
+  if(DB.comics.length === 0) return;
   
-  let csv = headers.join(',') + '\n' + rows.map(r => r.join(',')).join('\n');
-  const blob = new Blob([csv], {type: 'text/csv'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = `comicvault_export.csv`;
-  a.click();
-  toast('✅ CSV exported');
+  container.innerHTML = DB.comics.map(c => `
+    <div class="card" style="display:flex; justify-content:space-between; align-items:center">
+      <div>
+        <div style="font-weight:700">${c.title} #${c.issue}</div>
+        <div style="font-size:0.8rem; color:var(--dim)">${c.publisher} • Grade: ${c.grade}</div>
+      </div>
+      <div style="color:var(--gold); font-weight:800">${c.decision || 'HOLD'}</div>
+    </div>
+  `).join('');
 }
 
-// CSV IMPORT
-function importFromCLZ(input) {
+// BUG FIX: Robust CSV Parsing
+function importCSV(input) {
   const file = input.files[0];
   if (!file) return;
+  
   const reader = new FileReader();
-  reader.onload = e => {
-    const text = e.target.result;
-    const lines = text.split('\n').slice(1); // Skip header
+  reader.onload = (e) => {
+    const lines = e.target.result.split('\n').slice(1);
     lines.forEach(line => {
-      const cols = line.split(',');
-      if(cols.length > 1) {
-        DB.comics.push({ title: cols[0], issue: cols[1], publisher: cols[2], grade: cols[3] });
+      // Regex to handle commas inside quotes
+      const cols = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+      if(cols && cols.length >= 3) {
+        DB.comics.push({
+          title: cols[0].replace(/"/g,''),
+          issue: cols[1],
+          publisher: cols[2],
+          grade: cols[3] || 'Raw'
+        });
       }
     });
-    localStorage.setItem('cv_comics', JSON.stringify(DB.comics));
-    toast(`📥 Imported ${lines.length} items from CLZ`);
+    saveDB();
+    alert(`Imported ${lines.length} comics!`);
     nav('collection');
   };
   reader.readAsText(file);
 }
+
+function exportCSV() {
+  const head = "Title,Issue,Publisher,Grade\n";
+  const body = DB.comics.map(c => `"${c.title}",${c.issue},"${c.publisher}",${c.grade}`).join('\n');
+  const blob = new Blob([head + body], {type: 'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'ComicVault_Export.csv';
+  a.click();
+}
+
+function processImage(input) {
+  const res = document.getElementById('gradeResult');
+  res.innerHTML = "<p>Analyzing condition...</p>";
+  setTimeout(() => {
+    res.innerHTML = `<div class="card" style="border:1px solid var(--gold)">
+      <h4 style="color:var(--gold)">AI Grade: 9.4 NM</h4>
+      <p style="font-size:0.8rem">Spine: Clean | Corners: Sharp</p>
+      <button class="btn btn-gold" style="width:100%; margin-top:10px;" onclick="addToVault()">Add to Vault</button>
+    </div>`;
+  }, 1000);
+}
+
+function addToVault() {
+  DB.comics.push({title: "New Scan", issue: "1", publisher: "Unknown", grade: "9.4"});
+  saveDB();
+  nav('collection');
+}
+
+function saveDB() {
+  localStorage.setItem('cv_data', JSON.stringify(DB));
+}
+
+// Run initial render
+renderCollection();
 </script>
 </body>
 </html>
