@@ -9,32 +9,60 @@
 <meta name="theme-color" content="#0a0a0f">
 
 <style>
-/* === YOUR ORIGINAL CSS (kept intact) === */
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:wght@400;600;700;800&family=Barlow:wght@300;400;500;600&display=swap');
 
 :root {
   --ink: #0a0a0f; --ink2: #111118; --panel: #16161f; --panel2: #1e1e2a;
   --border: #2a2a3e; --border2: #3a3a50; --paper: #f0ece4; --accent: #e63946;
   --gold: #ffd60a; --green: #4ade80; --blue: #4895ef; --purple: #a78bfa;
+  --dim: #a0a0b0;
 }
 
 * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-body { background:var(--ink); color:var(--paper); font-family:'Barlow',sans-serif; font-size:15px; height:100%; overflow:hidden; }
+body { background:var(--ink); color:var(--paper); font-family:'Barlow',sans-serif; font-size:15px; height:100vh; overflow:hidden; }
 
-/* (All your original styles remain here - I didn't remove or change any of them for compatibility) */
-/* ... paste your full <style> content from the original file here if you want to keep every detail ... */
+.app-shell { display: flex; height: 100vh; width: 100vw; }
 
-/* New small additions for better UX */
-.btn-gallery { background:rgba(72,149,239,.15); color:var(--blue); border:1px solid rgba(72,149,239,.3); }
-.btn-gallery:hover { background:rgba(72,149,239,.25); }
-.low-touch-note { font-size:0.78rem; color:var(--dim); background:rgba(255,214,10,.06); padding:0.8rem; border-radius:4px; margin-bottom:1rem; }
+/* SIDEBAR */
+.sidebar { width: 260px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; transition: transform 0.3s ease; z-index: 100; }
+.sidebar-logo { padding: 20px; border-bottom: 1px solid var(--border); }
+.sidebar-logo-text { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; letter-spacing: 1px; }
+.sidebar-logo-text span { color: var(--accent); }
+.sidebar-nav { padding: 10px; overflow-y: auto; flex: 1; }
+.nav-section-label { font-size: 0.7rem; font-weight: 800; color: var(--dim); margin: 15px 10px 5px; letter-spacing: 1px; }
+.nav-item { padding: 12px 15px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 10px; margin-bottom: 2px; transition: 0.2s; }
+.nav-item:hover { background: var(--panel2); }
+.nav-item.active { background: var(--accent); color: white; }
+
+/* MAIN AREA */
+.main-area { flex: 1; display: flex; flex-direction: column; background: var(--ink); position: relative; }
+.top-header { height: 60px; background: var(--panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 15px; gap: 10px; }
+.header-title { flex: 1; font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 1.2rem; text-transform: uppercase; }
+.hamburger { background: none; border: none; color: white; font-size: 1.5rem; cursor: pointer; display: none; }
+
+.content-scroll { flex: 1; overflow-y: auto; padding: 15px; }
+.page { display: none; }
+.page.active { display: block; }
+
+/* BUTTONS & UI */
+.btn { padding: 10px 15px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; font-family: inherit; }
+.btn-full { width: 100%; margin-bottom: 10px; }
+.btn-primary { background: var(--blue); color: white; }
+.btn-gold { background: var(--gold); color: var(--ink); }
+.btn-gallery { background: rgba(72,149,239,.15); color: var(--blue); border: 1px solid rgba(72,149,239,.3); }
+.low-touch-note { font-size: 0.78rem; color: var(--dim); background: rgba(255,214,10,.06); padding: 0.8rem; border-radius: 4px; margin-bottom: 1rem; border-left: 3px solid var(--gold); }
+.mt-md { margin-top: 15px; }
+
+@media (max-width: 768px) {
+  .sidebar { position: absolute; left: 0; top: 0; bottom: 0; transform: translateX(-100%); }
+  .sidebar.open { transform: translateX(0); }
+  .hamburger { display: block; }
+}
 </style>
 </head>
 <body>
 
 <div class="app-shell">
-
-  <!-- SIDEBAR - Selling tools moved to top -->
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-logo">
       <div class="sidebar-logo-text">Comic<span>Vault</span></div>
@@ -42,150 +70,161 @@ body { background:var(--ink); color:var(--paper); font-family:'Barlow',sans-seri
     </div>
     <div class="sidebar-nav">
       <div class="nav-section-label">SELLING (Priority)</div>
-      <div class="nav-item active" data-page="bundle" onclick="nav(this)"><span class="nav-icon">🎁</span> Bundle Builder</div>
-      <div class="nav-item" data-page="publish" onclick="nav(this)"><span class="nav-icon">🚀</span> Publish Hub</div>
-      <div class="nav-item" data-page="sellmode" onclick="nav(this)"><span class="nav-icon">🎯</span> Sell Mode Sorter</div>
+      <div class="nav-item" data-page="bundle" onclick="nav('bundle')"><span class="nav-icon">🎁</span> Bundle Builder</div>
+      <div class="nav-item" data-page="publish" onclick="nav('publish')"><span class="nav-icon">🚀</span> Publish Hub</div>
+      <div class="nav-item" data-page="sellmode" onclick="nav('sellmode')"><span class="nav-icon">🎯</span> Sell Mode Sorter</div>
 
       <div class="nav-section-label">COLLECTION</div>
-      <div class="nav-item" data-page="collection" onclick="nav(this)"><span class="nav-icon">📦</span> Collection</div>
-      <div class="nav-item" data-page="prices" onclick="nav(this)"><span class="nav-icon">📷</span> Photo Grade + Sell</div>
+      <div class="nav-item active" data-page="collection" onclick="nav('collection')"><span class="nav-icon">📦</span> Collection</div>
+      <div class="nav-item" data-page="prices" onclick="nav('prices')"><span class="nav-icon">📷</span> Photo Grade + Sell</div>
 
       <div class="nav-section-label">CLZ SYNC</div>
-      <div class="nav-item" data-page="clzsync" onclick="nav(this)"><span class="nav-icon">🔄</span> CLZ Import/Export</div>
-
-      <!-- Your original remaining nav items go here -->
-      <!-- ... (missing, finder, inventory, etc.) ... -->
+      <div class="nav-item" data-page="clzsync" onclick="nav('clzsync')"><span class="nav-icon">🔄</span> CLZ Import/Export</div>
     </div>
   </nav>
 
-  <!-- MAIN AREA -->
   <div class="main-area">
     <header class="top-header">
       <button class="hamburger" onclick="toggleSidebar()">☰</button>
       <div class="header-title" id="pageTitle">Collection</div>
-      <button class="header-btn hbtn-ghost" onclick="openAdd()">+ Add</button>
-      <button class="header-btn" style="background:var(--purple);color:#fff" onclick="navToScanner()">📷 Scan</button>
-      <button class="header-btn hbtn-gold" onclick="openBulk()">⚡ Bulk</button>
+      <button class="btn btn-gold" onclick="nav('prices')">📷 Scan</button>
     </header>
 
     <div class="content-scroll" id="contentScroll">
+      
+      <!-- COLLECTION PAGE -->
+      <div class="page active" id="page-collection">
+        <h2>Your Library</h2>
+        <p style="color:var(--dim)">Empty - Start by importing from CLZ or scanning a comic.</p>
+      </div>
 
-      <!-- PHOTO GRADE SECTION - IMPROVED -->
+      <!-- PHOTO GRADE PAGE -->
       <div class="page" id="page-prices">
         <div class="low-touch-note">
           💡 Low-touch tip: Do your CLZ cover scan while bagging/boardering, then reuse that photo here for grading.
         </div>
-
         <div style="background:rgba(255,214,10,.06);border:2px solid rgba(255,214,10,.3);border-radius:6px;padding:1rem;margin-bottom:1rem">
           <div style="font-family:'Barlow Condensed';font-weight:700;font-size:1rem;color:var(--gold);margin-bottom:.3rem">📷 Photo → Grade + Sell Strategy</div>
-          <div style="font-size:.76rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
-            Reuse your recent CLZ cover scan or take a new photo. AI analyzes real condition and gives a clear sell/hold/bundle recommendation.
-          </div>
-
           <div style="display:flex;gap:.5rem;margin-bottom:.8rem;flex-wrap:wrap">
-            <button class="btn btn-gold" style="flex:1;font-weight:700" onclick="document.getElementById('gradePhotoInput').click()">
-              📷 Take New Photo
-            </button>
-            <button class="btn btn-gallery" style="flex:1" onclick="selectFromGallery()">
-              🖼️ Choose from Recent Photos (CLZ reuse)
-            </button>
+            <button class="btn btn-gold" style="flex:1" onclick="document.getElementById('gradePhotoInput').click()">📷 Take Photo</button>
+            <button class="btn btn-gallery" style="flex:1" onclick="selectFromGallery()">🖼️ Gallery</button>
           </div>
-
           <input type="file" id="gradePhotoInput" accept="image/*" capture="environment" style="display:none" onchange="gradeFromPhoto(this)">
           <div id="gradePhotoResult"></div>
         </div>
-
-        <!-- Rest of your original Price Scanner content remains here -->
       </div>
 
-      <!-- NEW CLZ SYNC PAGE -->
+      <!-- CLZ SYNC PAGE -->
       <div class="page" id="page-clzsync">
         <div class="low-touch-note">
           <strong>CLZ Sync</strong><br>
-          1. In CLZ Web: Export → CSV (include all Custom Fields)<br>
-          2. Import here → run selling logic<br>
-          3. Export updated CSV → import back into CLZ
+          1. In CLZ Web: Export → CSV<br>
+          2. Import here → Run logic<br>
+          3. Export back to CLZ
         </div>
-
         <button class="btn btn-primary btn-full" onclick="exportForCLZ()">📤 Export CSV for CLZ</button>
         <input type="file" id="clzImportFile" accept=".csv" style="display:none" onchange="importFromCLZ(this)">
         <button class="btn btn-gold btn-full mt-md" onclick="document.getElementById('clzImportFile').click()">📥 Import CLZ CSV</button>
-
         <div id="clzStatus" class="mt-md"></div>
       </div>
 
-      <!-- Your other pages (bundle, publish, collection, etc.) go here unchanged -->
+      <!-- Placeholder Pages -->
+      <div class="page" id="page-bundle"><h2>Bundle Builder</h2></div>
+      <div class="page" id="page-publish"><h2>Publish Hub</h2></div>
+      <div class="page" id="page-sellmode"><h2>Sell Mode Sorter</h2></div>
+
     </div>
   </div>
 </div>
 
-<div id="toastContainer"></div>
-
 <script>
-// === YOUR ORIGINAL JS CODE (keep everything you already have) ===
-// ... paste all your existing functions here ...
+// INITIALIZE DATABASE
+let DB = {
+  comics: JSON.parse(localStorage.getItem('cv_comics')) || []
+};
 
-// === NEW FUNCTIONS ADDED BELOW ===
+// NAVIGATION
+function nav(pageId) {
+  // Update UI
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  
+  document.getElementById('page-' + pageId).classList.add('active');
+  document.querySelector(`[data-page="${pageId}"]`).classList.add('active');
+  
+  // Set Title
+  const titles = { 'collection': 'Collection', 'prices': 'Photo Grade', 'clzsync': 'CLZ Sync', 'bundle': 'Bundles', 'publish': 'Publish', 'sellmode': 'Sorter' };
+  document.getElementById('pageTitle').innerText = titles[pageId] || 'ComicVault';
+  
+  // Close sidebar on mobile
+  document.getElementById('sidebar').classList.remove('open');
+}
 
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+function toast(msg) {
+  alert(msg); // Basic alert for now
+}
+
+// GALLERY SELECT
 function selectFromGallery() {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
   input.onchange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      const fakeEvent = { target: { files: [e.target.files[0]] } };
-      gradeFromPhoto(fakeEvent);
-    }
+    if (e.target.files && e.target.files[0]) { gradeFromPhoto(e.target); }
   };
   input.click();
 }
 
-function quickEbaySold(title, issue = '') {
-  const q = encodeURIComponent(`${title} ${issue} comic`);
-  window.open(`https://www.ebay.com/sch/i.html?_nkw=${q}&LH_Sold=1&LH_Complete=1`, '_blank');
+function gradeFromPhoto(input) {
+  const resultDiv = document.getElementById('gradePhotoResult');
+  resultDiv.innerHTML = "<p>⌛ Analyzing image (Simulated)...</p>";
+  setTimeout(() => {
+    resultDiv.innerHTML = `<div style="background:var(--panel2);padding:10px;border-radius:4px;margin-top:10px">
+      <strong>AI Analysis:</strong> Estimated Grade: 9.2 (NM-)<br>
+      <button class="btn btn-gold btn-full mt-md" onclick="nav('collection')">Save to Vault</button>
+    </div>`;
+  }, 1500);
 }
 
-// Example: Add this button to your gradeFromPhoto result HTML
-// <button class="btn btn-ghost btn-sm" onclick="quickEbaySold('${d.title || ''}', '${d.issue || ''}')">🔍 Check eBay Sold Listings</button>
-
+// CSV EXPORT
 function exportForCLZ() {
-  // Simple CSV export with your key selling fields
-  const headers = ['Title','Issue','Publisher','MyGrade','Decision','LotType','TargetSellPrice','BinColor','BundleID','Notes'];
-  const rows = DB.comics.map(c => [
-    c.title || '', c.issue || '', c.publisher || '',
-    c.MyGrade || c.grade || '', c.Decision || 'Hold',
-    c.LotType || '', c.TargetSellPrice || c.price || '',
-    c.BinColor || 'Red', c.BundleID || '', c.notes || ''
-  ]);
-
-  let csv = headers.join(',') + '\n' + 
-    rows.map(row => row.map(field => `"${String(field).replace(/"/g,'""')}"`).join(',')).join('\n');
-
+  if(DB.comics.length === 0) { toast("No comics to export!"); return; }
+  const headers = ['Title','Issue','Publisher','MyGrade','Decision'];
+  const rows = DB.comics.map(c => [c.title, c.issue, c.publisher, c.grade, 'Hold']);
+  
+  let csv = headers.join(',') + '\n' + rows.map(r => r.join(',')).join('\n');
   const blob = new Blob([csv], {type: 'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = `comicvault_for_clz_${new Date().toISOString().slice(0,10)}.csv`;
-  a.click(); URL.revokeObjectURL(url);
-  toast('✅ CSV exported for CLZ – ready to import');
+  a.href = url; a.download = `comicvault_export.csv`;
+  a.click();
+  toast('✅ CSV exported');
 }
 
+// CSV IMPORT
 function importFromCLZ(input) {
   const file = input.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
-    // Basic parsing - you can expand this later
-    toast(`✅ Imported CLZ data (${file.name})`, 'success');
-    // Add your merge logic here if desired
+    const text = e.target.result;
+    const lines = text.split('\n').slice(1); // Skip header
+    lines.forEach(line => {
+      const cols = line.split(',');
+      if(cols.length > 1) {
+        DB.comics.push({ title: cols[0], issue: cols[1], publisher: cols[2], grade: cols[3] });
+      }
+    });
+    localStorage.setItem('cv_comics', JSON.stringify(DB.comics));
+    toast(`📥 Imported ${lines.length} items from CLZ`);
+    nav('collection');
   };
   reader.readAsText(file);
 }
-
-// Initialize
-document.addEventListener('DOMContentLoaded', () => {
-  // Your original init code...
-  toast('App loaded – try the new "Choose from Recent Photos" button!', 'info', 4000);
-});
 </script>
 </body>
 </html>
